@@ -90,7 +90,7 @@ elif choice == "Admin Login":
             if sku_data.data:
                 df = pd.DataFrame(sku_data.data)
                 st.dataframe(df)
-                if st.button("Low Stock Alert"):
+                if st.button("Generate Purchase List"):
                     # Min Stock Level check
                     low = df[df['current_stock'].astype(float) < df['Min Stock Level'].astype(float)]
                     st.warning("Immediate Purchase Needed:")
