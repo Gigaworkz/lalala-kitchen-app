@@ -76,14 +76,16 @@ if choice == "Billing":
 # --- MODULE 2: ADMIN LOGIN (STABLE VERSION) ---
 elif choice == "Admin Login":
     st.subheader("🔒 Admin Control Panel")
-    
-    # Password logic in a clean way
     admin_pwd = st.text_input("Enter Password", type="password")
     
-    if admin_pwd == "1432":
+    if admin_pwd == "140226":
         st.success("Access Granted.")
-        admin_tab = st.sidebar.radio("Admin Menu", ["Inventory Status", "Purchase Entry", "Expenses", "Settlements", "CRM Report"])
         
+        # --- CUMULATIVE ADMIN MENU ---
+        admin_tab = st.sidebar.radio("Admin Menu", 
+            ["Inventory Status", "Accounts", "Wastage Entry", "Settlements", "CRM Report"])
+        
+        # 1. INVENTORY STATUS
         if admin_tab == "Inventory Status":
             st.subheader("📦 Live Stock Tracker")
             sku_data = supabase.table("sku_master").select("*").execute()
@@ -91,19 +93,69 @@ elif choice == "Admin Login":
                 df = pd.DataFrame(sku_data.data)
                 st.dataframe(df)
                 if st.button("Generate Purchase List"):
-                    # Min Stock Level check
                     low = df[df['current_stock'].astype(float) < df['Min Stock Level'].astype(float)]
                     st.warning("Immediate Purchase Needed:")
                     st.write(low[['Ingerdient Name', 'current_stock', 'Purchase unit']])
-        
-        elif admin_tab == "Purchase Entry":
-            st.subheader("🛒 Update Stock")
-            p_item = st.selectbox("Select Item", [i['Ingerdient Name'] for i in supabase.table("sku_master").select('\"Ingerdient Name\"').execute().data])
-            p_qty = st.number_input("Added Qty", min_value=0.1)
-            if st.button("Add to Inventory"):
-                curr = float(supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', p_item).execute().data[0]['current_stock'])
-                supabase.table("sku_master").update({"current_stock": curr + p_qty}).eq('\"Ingerdient Name\"', p_item).execute()
-                st.success("Stock Updated!")
+
+        # 2. ACCOUNTS (Nested Sub-Menu)
+        elif admin_tab == "Accounts":
+            st.subheader("💰 Accounts Management")
+            acc_type = st.radio("Select Entry Type", ["Purchase Entry", "Fixed Expenses"], horizontal=True)
+            
+            if acc_type == "Purchase Entry":
+                st.markdown("### 🛒 Raw Material Purchase")
+                col1, col2 = st.columns(2)
+                with col1:
+                    p_date = st.date_input("Purchase Date", datetime.date.today(), key="p_date")
+                    p_item_res = supabase.table("sku_master").select('\"Ingerdient Name\"').execute()
+                    p_item = st.selectbox("Select Item", [i['Ingerdient Name'] for i in p_item_res.data], key="p_item")
+                with col2:
+                    p_qty = st.number_input("Quantity Added", min_value=0.1, key="p_qty")
+                    p_amt = st.number_input("Total Amount Spent", min_value=0.0, key="p_amt")
+                
+                if st.button("Submit Purchase"):
+                    # Stock Update (+)
+                    curr_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', p_item).execute()
+                    curr = float(curr_res.data[0]['current_stock'])
+                    supabase.table("sku_master").update({"current_stock": curr + p_qty}).eq('\"Ingerdient Name\"', p_item).execute()
+                    # Accounts Log
+                    supabase.table("accounts").insert({"date": str(p_date), "type": "Purchase", "category": "Raw Material", "item_name": p_item, "amount": p_amt, "qty": p_qty}).execute()
+                    st.success(f"{p_item} Stock Updated & Accounts Logged!")
+
+            elif acc_type == "Fixed Expenses":
+                st.markdown("### 💸 Fixed Expense Entry")
+                e_date = st.date_input("Expense Date", datetime.date.today(), key="e_date")
+                e_cat = st.selectbox("Category", ["Rent", "EB Bill", "Salary", "Gas", "Maintenance", "Other"], key="e_cat")
+                e_amt = st.number_input("Amount", min_value=0.0, key="e_amt")
+                e_note = st.text_area("Notes", key="e_note")
+                if st.button("Save Fixed Expense"):
+                    supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt, "notes": e_note}).execute()
+                    st.success("Fixed Expense Recorded!")
+
+        # 3. WASTAGE ENTRY
+        elif admin_tab == "Wastage Entry":
+            st.subheader("🗑️ Daily Wastage Record")
+            w_date = st.date_input("Wastage Date", datetime.date.today())
+            w_item_res = supabase.table("sku_master").select('\"Ingerdient Name\"').execute()
+            w_item = st.selectbox("Item Wasted", [i['Ingerdient Name'] for i in w_item_res.data])
+            w_qty = st.number_input("Wasted Quantity", min_value=0.1)
+            
+            if st.button("Record Wastage"):
+                curr_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', w_item).execute()
+                curr = float(curr_res.data[0]['current_stock'])
+                supabase.table("sku_master").update({"current_stock": curr - w_qty}).eq('\"Ingerdient Name\"', w_item).execute()
+                supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Loss", "item_name": w_item, "qty": w_qty, "amount": 0}).execute()
+                st.error(f"Stock Reduced: {w_item}")
+
+        # 4. SETTLEMENTS (Placeholder - Next Testing)
+        elif admin_tab == "Settlements":
+            st.subheader("💳 Online Channel Settlements")
+            st.info("Pazhaya logic inga safe-ah irukku. Innum code update pannaala.")
+
+        # 5. CRM REPORT (Placeholder - Next Testing)
+        elif admin_tab == "CRM Report":
+            st.subheader("👥 CRM & Sales Analytics")
+            st.info("Sales graphs and Customer data will be here.")
 
     elif admin_pwd != "":
         st.error("Incorrect Password.")
