@@ -80,7 +80,7 @@ elif choice == "Admin Login":
     # Password logic in a clean way
     admin_pwd = st.text_input("Enter Password", type="password")
     
-    if admin_pwd == "140226":
+    if admin_pwd == "1432":
         st.success("Access Granted.")
         admin_tab = st.sidebar.radio("Admin Menu", ["Inventory Status", "Purchase Entry", "Expenses", "Settlements", "CRM Report"])
         
