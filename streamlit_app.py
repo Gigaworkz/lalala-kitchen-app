@@ -12,7 +12,7 @@ st.set_page_config(page_title="Sig-nature Kitchen", layout="wide")
 
 # --- UI HEADER ---
 st.markdown('<h1 style="text-align: center; color: #1B5E20;">👨‍🍳 LALALA CLOUD KITCHEN</h1>', unsafe_allow_html=True)
-st.markdown('<p style="text-align: center; color: #388E3C; font-size: 20px;">Sig-nature taste | Pure VEG 🥦</p>', unsafe_allow_html=True)
+st.markdown('<p style="text-align: center; color: #388E3C; font-size: 20px;">Good Food, Sig-nature Feel | Pure VEG 🥦</p>', unsafe_allow_html=True)
 
 # --- NAVIGATION ---
 st.sidebar.title("Main Menu")
