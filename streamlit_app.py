@@ -103,23 +103,42 @@ elif choice == "Admin Login":
             # --- UPDATED ACCOUNTS SUB-MENU ---
             acc_type = st.radio("Select Action", ["Purchase Entry", "Fixed Expenses", "View Expenses Report"], horizontal=True)
             
-            if acc_type == "Purchase Entry":
+if acc_type == "Purchase Entry":
                 st.markdown("### 🛒 Raw Material Purchase")
-                # ... (Keep existing Purchase Entry code here) ...
+                
+                # Fetching items
+                p_item_res = supabase.table("sku_master").select('\"Ingerdient Name\"', '\"Purchase unit\"').execute()
+                item_data = {i['Ingerdient Name']: i['Purchase unit'] for i in p_item_res.data}
+                
                 col1, col2 = st.columns(2)
                 with col1:
                     p_date = st.date_input("Purchase Date", datetime.date.today(), key="p_date")
-                    p_item_res = supabase.table("sku_master").select('\"Ingerdient Name\"').execute()
-                    p_item = st.selectbox("Select Item", [i['Ingerdient Name'] for i in p_item_res.data], key="p_item")
+                    p_item = st.selectbox("Select Item", list(item_data.keys()), key="p_item")
+                    
+                    # DYNAMIC UNIT DISPLAY
+                    selected_unit = item_data.get(p_item, "")
+                    st.info(f"Unit for this item: **{selected_unit}**")
+                
                 with col2:
-                    p_qty = st.number_input("Quantity Added", min_value=0.1, key="p_qty")
-                    p_amt = st.number_input("Total Amount Spent", min_value=0.0, key="p_amt")
+                    p_qty = st.number_input(f"Quantity Added ({selected_unit})", min_value=0.1, key="p_qty")
+                    p_amt = st.number_input("Total Amount Spent (incl. Tax/Delivery)", min_value=0.0, key="p_amt")
                 
                 if st.button("Submit Purchase"):
+                    # Stock Update (+)
                     curr_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', p_item).execute()
                     curr = float(curr_res.data[0]['current_stock'])
                     supabase.table("sku_master").update({"current_stock": curr + p_qty}).eq('\"Ingerdient Name\"', p_item).execute()
-                    supabase.table("accounts").insert({"date": str(p_date), "type": "Purchase", "category": "Raw Material", "item_name": p_item, "amount": p_amt, "qty": p_qty}).execute()
+                    
+                    # Accounts Log (Recording the price for average calculation later)
+                    supabase.table("accounts").insert({
+                        "date": str(p_date), 
+                        "type": "Purchase", 
+                        "category": "Raw Material", 
+                        "item_name": p_item, 
+                        "amount": p_amt, 
+                        "qty": p_qty,
+                        "unit": selected_unit
+                    }).execute()
                     st.success(f"{p_item} Stock Updated & Accounts Logged!")
 
             elif acc_type == "Fixed Expenses":
