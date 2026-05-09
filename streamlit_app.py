@@ -158,56 +158,71 @@ elif choice == "Admin Login":
                 else:
                     st.info("No expense records found.")
 
-        # 3. WASTAGE ENTRY (Raw Material vs Cooked Dish)
+        # 3. WASTAGE & NON-REVENUE TRACKER
         elif admin_tab == "Wastage Entry":
-            st.subheader("🗑️ Daily Wastage Record")
+            st.subheader("🗑️ Non-Revenue & Loss Entry")
             
-            # Wastage Type Selection
-            w_type = st.radio("What are you wasting?", ["Raw Material (Ingredients)", "Cooked Dish (Finished Product)"], horizontal=True)
+            w_category = st.radio("Type of Entry", 
+                                 ["Raw Material Loss", "Cooked Item Waste", "Complimentary / Promo"], 
+                                 horizontal=True)
             
-            if w_type == "Raw Material (Ingredients)":
-                # Raw Material Logic (Linked to sku_master)
+            # 1. RAW MATERIAL LOSS (Direct Stock Impact)
+            if w_category == "Raw Material Loss":
                 w_res = supabase.table("sku_master").select('\"Ingerdient Name\"', '\"Purchase unit\"', 'current_stock').execute()
                 w_data = {i['Ingerdient Name']: {"unit": i['Purchase unit'], "stock": i['current_stock']} for i in w_res.data}
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    w_date = st.date_input("Wastage Date", datetime.date.today(), key="w_date_raw")
-                    w_item = st.selectbox("Select Ingredient", list(w_data.keys()), key="w_item_raw")
-                    s_unit = w_data[w_item]["unit"]
-                    s_stock = w_data[w_item]["stock"]
-                    st.warning(f"Current Stock: **{s_stock} {s_unit}**")
-
+                    w_date = st.date_input("Date", datetime.date.today(), key="w_raw_date")
+                    w_item = st.selectbox("Select Ingredient", list(w_data.keys()), key="w_raw_item")
+                    s_unit, s_stock = w_data[w_item]["unit"], w_data[w_item]["stock"]
+                    st.warning(f"Live Stock: **{s_stock} {s_unit}**")
                 with col2:
-                    w_qty = st.number_input(f"Wasted Quantity ({s_unit})", min_value=0.01, key="w_qty_raw")
-                    w_reason = st.selectbox("Reason", ["Spoilage", "Expired", "Other"], key="w_reason_raw")
+                    w_qty = st.number_input(f"Quantity ({s_unit})", min_value=0.01, key="w_raw_qty")
+                    w_reason = st.selectbox("Reason", ["Spoilage", "Expired", "Preparation Error"], key="w_raw_res")
 
-                if st.button("Confirm Raw Wastage"):
-                    if w_qty > s_stock:
-                        st.error("Error: Quantity exceeds current stock!")
+                if st.button("Record Raw Loss"):
+                    if w_qty <= s_stock:
+                        new_s = float(s_stock) - float(w_qty)
+                        supabase.table("sku_master").update({"current_stock": new_s}).eq('\"Ingerdient Name\"', w_item).execute()
+                        supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Raw Loss", "item_name": w_item, "qty": w_qty, "amount": 0, "notes": w_reason}).execute()
+                        st.success("Stock Adjusted Successfully!")
                     else:
-                        new_stock = float(s_stock) - float(w_qty)
-                        supabase.table("sku_master").update({"current_stock": new_stock}).eq('\"Ingerdient Name\"', w_item).execute()
-                        supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Raw Loss", "item_name": w_item, "qty": w_qty, "unit": s_unit, "amount": 0, "notes": w_reason}).execute()
-                        st.success(f"Stock Updated! New balance: {new_stock}")
+                        st.error("Insufficient stock!")
 
-            else:
-                # Cooked Dish Logic (Accounts Entry Only)
-                st.info("Note: Cooked items won't affect raw ingredient stock as they are already accounted for during billing.")
+            # 2. COOKED ITEM WASTE (Linked to Menu Master)
+            elif w_category == "Cooked Item Waste":
+                # Fetching from menu_master
+                menu_res = supabase.table("menu_master").select("*").execute()
+                menu_list = [m['item_name'] for m in menu_res.data] # Assuming column is 'item_name'
+
+                st.info("Note: Select cooked dishes from your Menu Master.")
                 col1, col2 = st.columns(2)
                 with col1:
-                    w_date = st.date_input("Wastage Date", datetime.date.today(), key="w_date_cook")
-                    w_dish = st.text_input("Enter Cooked Dish Name (e.g., Chicken Burger)")
+                    w_date = st.date_input("Date", datetime.date.today(), key="w_cook_date")
+                    w_dish = st.selectbox("Select Cooked Dish", menu_list, key="w_cook_select")
                 with col2:
-                    w_qty_cook = st.number_input("Quantity (Portions)", min_value=1, key="w_qty_cook")
-                    w_loss_val = st.number_input("Estimated Selling Price Loss (₹)", min_value=0.0)
+                    w_qty_c = st.number_input("Quantity (Portions)", min_value=1, key="w_cook_qty")
+                    w_loss = st.number_input("Estimated Production Cost (₹)", min_value=0.0, key="w_cook_val")
                 
-                if st.button("Confirm Cooked Wastage"):
-                    supabase.table("accounts").insert({
-                        "date": str(w_date), "type": "Wastage", "category": "Cooked Loss", 
-                        "item_name": w_dish, "qty": w_qty_cook, "amount": w_loss_val, "notes": "Cooked Item Waste"
-                    }).execute()
-                    st.error(f"Financial Loss of ₹{w_loss_val} Recorded for {w_dish}")
+                if st.button("Record Cooked Waste"):
+                    supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Cooked Loss", "item_name": w_dish, "qty": w_qty_c, "amount": w_loss, "notes": "Production/Timeout Loss"}).execute()
+                    st.error(f"Loss of ₹{w_loss} Recorded for {w_dish}.")
+
+            # 3. COMPLIMENTARY / PROMO
+            elif w_category == "Complimentary / Promo":
+                st.success("Record items given for free as Marketing/Offer.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    c_date = st.date_input("Date", datetime.date.today(), key="c_date")
+                    c_item = st.text_input("Item Name (e.g., Welcome Drink / Offer Item)", key="c_name")
+                with col2:
+                    c_qty = st.number_input("Total Portions", min_value=1, key="c_qty")
+                    c_cost = st.number_input("Total Marketing Cost (₹)", min_value=0.0, key="c_val")
+                
+                if st.button("Record Promo Entry"):
+                    supabase.table("accounts").insert({"date": str(c_date), "type": "Expense", "category": "Marketing", "item_name": c_item, "qty": c_qty, "amount": c_cost, "notes": "Promo"}).execute()
+                    st.success(f"Promo entry of ₹{c_cost} added.")
 
         # 4. SETTLEMENTS (Placeholder - Next Testing)
         elif admin_tab == "Settlements":
