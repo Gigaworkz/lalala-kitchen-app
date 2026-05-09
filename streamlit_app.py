@@ -158,20 +158,56 @@ elif choice == "Admin Login":
                 else:
                     st.info("No expense records found.")
 
-        # 3. WASTAGE ENTRY
+        # 3. WASTAGE ENTRY (Raw Material vs Cooked Dish)
         elif admin_tab == "Wastage Entry":
             st.subheader("🗑️ Daily Wastage Record")
-            w_date = st.date_input("Wastage Date", datetime.date.today())
-            w_item_res = supabase.table("sku_master").select('\"Ingerdient Name\"').execute()
-            w_item = st.selectbox("Item Wasted", [i['Ingerdient Name'] for i in w_item_res.data])
-            w_qty = st.number_input("Wasted Quantity", min_value=0.1)
             
-            if st.button("Record Wastage"):
-                curr_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', w_item).execute()
-                curr = float(curr_res.data[0]['current_stock'])
-                supabase.table("sku_master").update({"current_stock": curr - w_qty}).eq('\"Ingerdient Name\"', w_item).execute()
-                supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Loss", "item_name": w_item, "qty": w_qty, "amount": 0}).execute()
-                st.error(f"Stock Reduced: {w_item}")
+            # Wastage Type Selection
+            w_type = st.radio("What are you wasting?", ["Raw Material (Ingredients)", "Cooked Dish (Finished Product)"], horizontal=True)
+            
+            if w_type == "Raw Material (Ingredients)":
+                # Raw Material Logic (Linked to sku_master)
+                w_res = supabase.table("sku_master").select('\"Ingerdient Name\"', '\"Purchase unit\"', 'current_stock').execute()
+                w_data = {i['Ingerdient Name']: {"unit": i['Purchase unit'], "stock": i['current_stock']} for i in w_res.data}
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    w_date = st.date_input("Wastage Date", datetime.date.today(), key="w_date_raw")
+                    w_item = st.selectbox("Select Ingredient", list(w_data.keys()), key="w_item_raw")
+                    s_unit = w_data[w_item]["unit"]
+                    s_stock = w_data[w_item]["stock"]
+                    st.warning(f"Current Stock: **{s_stock} {s_unit}**")
+
+                with col2:
+                    w_qty = st.number_input(f"Wasted Quantity ({s_unit})", min_value=0.01, key="w_qty_raw")
+                    w_reason = st.selectbox("Reason", ["Spoilage", "Expired", "Other"], key="w_reason_raw")
+
+                if st.button("Confirm Raw Wastage"):
+                    if w_qty > s_stock:
+                        st.error("Error: Quantity exceeds current stock!")
+                    else:
+                        new_stock = float(s_stock) - float(w_qty)
+                        supabase.table("sku_master").update({"current_stock": new_stock}).eq('\"Ingerdient Name\"', w_item).execute()
+                        supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Raw Loss", "item_name": w_item, "qty": w_qty, "unit": s_unit, "amount": 0, "notes": w_reason}).execute()
+                        st.success(f"Stock Updated! New balance: {new_stock}")
+
+            else:
+                # Cooked Dish Logic (Accounts Entry Only)
+                st.info("Note: Cooked items won't affect raw ingredient stock as they are already accounted for during billing.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    w_date = st.date_input("Wastage Date", datetime.date.today(), key="w_date_cook")
+                    w_dish = st.text_input("Enter Cooked Dish Name (e.g., Chicken Burger)")
+                with col2:
+                    w_qty_cook = st.number_input("Quantity (Portions)", min_value=1, key="w_qty_cook")
+                    w_loss_val = st.number_input("Estimated Selling Price Loss (₹)", min_value=0.0)
+                
+                if st.button("Confirm Cooked Wastage"):
+                    supabase.table("accounts").insert({
+                        "date": str(w_date), "type": "Wastage", "category": "Cooked Loss", 
+                        "item_name": w_dish, "qty": w_qty_cook, "amount": w_loss_val, "notes": "Cooked Item Waste"
+                    }).execute()
+                    st.error(f"Financial Loss of ₹{w_loss_val} Recorded for {w_dish}")
 
         # 4. SETTLEMENTS (Placeholder - Next Testing)
         elif admin_tab == "Settlements":
