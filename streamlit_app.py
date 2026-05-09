@@ -194,7 +194,23 @@ elif choice == "Admin Login":
             elif w_category == "Cooked Item Waste":
                 # Fetching from menu_master
                 menu_res = supabase.table("menu_master").select("*").execute()
-                menu_list = [m['item_name'] for m in menu_res.data] # Assuming column is 'item_name'
+                # Fetching from menu_master
+                menu_res = supabase.table("menu_master").select("*").execute()
+                
+                # Dynamic Check: Column name 'item_name' illana 'Item Name' nu check pannum
+                if menu_res.data:
+                    first_row = menu_res.data[0]
+                    # Check for common column names
+                    possible_cols = ['item_name', 'Item Name', 'Item_Name', 'Dish Name']
+                    actual_col = next((col for col in possible_cols if col in first_row), None)
+                    
+                    if actual_col:
+                        menu_list = [m[actual_col] for m in menu_res.data]
+                    else:
+                        st.error(f"Could not find item name column. Found: {list(first_row.keys())}")
+                        menu_list = []
+                else:
+                    menu_list = []
 
                 st.info("Note: Select cooked dishes from your Menu Master.")
                 col1, col2 = st.columns(2)
