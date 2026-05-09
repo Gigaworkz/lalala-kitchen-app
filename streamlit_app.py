@@ -100,13 +100,14 @@ elif choice == "Admin Login":
         # 2. ACCOUNTS (Nested Sub-Menu)
         elif admin_tab == "Accounts":
             st.subheader("💰 Accounts Management")
-            # --- UPDATED ACCOUNTS SUB-MENU ---
+            
+            # Sub-navigation for accounts
             acc_type = st.radio("Select Action", ["Purchase Entry", "Fixed Expenses", "View Expenses Report"], horizontal=True)
             
-if acc_type == "Purchase Entry":
+            if acc_type == "Purchase Entry":
                 st.markdown("### 🛒 Raw Material Purchase")
                 
-                # Fetching items
+                # Fetching items with Purchase Unit
                 p_item_res = supabase.table("sku_master").select('\"Ingerdient Name\"', '\"Purchase unit\"').execute()
                 item_data = {i['Ingerdient Name']: i['Purchase unit'] for i in p_item_res.data}
                 
@@ -129,21 +130,15 @@ if acc_type == "Purchase Entry":
                     curr = float(curr_res.data[0]['current_stock'])
                     supabase.table("sku_master").update({"current_stock": curr + p_qty}).eq('\"Ingerdient Name\"', p_item).execute()
                     
-                    # Accounts Log (Recording the price for average calculation later)
+                    # Accounts Log
                     supabase.table("accounts").insert({
-                        "date": str(p_date), 
-                        "type": "Purchase", 
-                        "category": "Raw Material", 
-                        "item_name": p_item, 
-                        "amount": p_amt, 
-                        "qty": p_qty,
-                        "unit": selected_unit
+                        "date": str(p_date), "type": "Purchase", "category": "Raw Material", 
+                        "item_name": p_item, "amount": p_amt, "qty": p_qty, "unit": selected_unit
                     }).execute()
                     st.success(f"{p_item} Stock Updated & Accounts Logged!")
 
             elif acc_type == "Fixed Expenses":
                 st.markdown("### 💸 Fixed Expense Entry")
-                # ... (Keep existing Fixed Expense code here) ...
                 e_date = st.date_input("Expense Date", datetime.date.today(), key="e_date")
                 e_cat = st.selectbox("Category", ["Rent", "EB Bill", "Salary", "Gas", "Maintenance", "Other"], key="e_cat")
                 e_amt = st.number_input("Amount", min_value=0.0, key="e_amt")
@@ -152,19 +147,13 @@ if acc_type == "Purchase Entry":
                     supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt, "notes": e_note}).execute()
                     st.success("Fixed Expense Recorded!")
 
-            # --- NEW: VIEW EXPENSES REPORT ---
             elif acc_type == "View Expenses Report":
                 st.markdown("### 📊 Overall Expense Summary")
-                # Fetching data from accounts table
                 acc_res = supabase.table("accounts").select("*").order("date", desc=True).execute()
                 if acc_res.data:
                     df_acc = pd.DataFrame(acc_res.data)
-                    
-                    # Totals calculation
                     total_spent = df_acc['amount'].sum()
                     st.metric("Total Expenses (₹)", f"{total_spent:,.2f}")
-                    
-                    # Table view
                     st.dataframe(df_acc[['date', 'type', 'category', 'item_name', 'amount', 'notes']])
                 else:
                     st.info("No expense records found.")
