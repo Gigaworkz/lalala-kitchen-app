@@ -97,67 +97,80 @@ elif choice == "Admin Login":
                     st.warning("Immediate Purchase Needed:")
                     st.write(low[['Ingerdient Name', 'current_stock', 'Purchase unit']])
 
-        # 2. ACCOUNTS (Nested Sub-Menu)
+       # 2. ACCOUNTS (Nested Sub-Menu)
         elif admin_tab == "Accounts":
             st.subheader("💰 Accounts Management")
             
-            # Sub-navigation for accounts
-            acc_type = st.radio("Select Action", ["Purchase Entry", "Fixed Expenses", "View Expenses Report"], horizontal=True)
+            # Integrated Menu
+            acc_type = st.radio("Select Action", 
+                                ["Purchase Entry", "Fixed Expenses", "Settlements", "View Accounts Report"], 
+                                horizontal=True)
             
             if acc_type == "Purchase Entry":
                 st.markdown("### 🛒 Raw Material Purchase")
-                
-                # Fetching items with Purchase Unit
                 p_item_res = supabase.table("sku_master").select('\"Ingerdient Name\"', '\"Purchase unit\"').execute()
                 item_data = {i['Ingerdient Name']: i['Purchase unit'] for i in p_item_res.data}
-                
                 col1, col2 = st.columns(2)
                 with col1:
                     p_date = st.date_input("Purchase Date", datetime.date.today(), key="p_date")
                     p_item = st.selectbox("Select Item", list(item_data.keys()), key="p_item")
-                    
-                    # DYNAMIC UNIT DISPLAY
-                    selected_unit = item_data.get(p_item, "")
-                    st.info(f"Unit for this item: **{selected_unit}**")
-                
+                    s_unit = item_data.get(p_item, "")
+                    st.info(f"Unit: **{s_unit}**")
                 with col2:
-                    p_qty = st.number_input(f"Quantity Added ({selected_unit})", min_value=0.1, key="p_qty")
-                    p_amt = st.number_input("Total Amount Spent (incl. Tax/Delivery)", min_value=0.0, key="p_amt")
-                
+                    p_qty = st.number_input(f"Qty ({s_unit})", min_value=0.1, key="p_qty")
+                    p_amt = st.number_input("Total Amount Spent", min_value=0.0, key="p_amt")
                 if st.button("Submit Purchase"):
-                    # Stock Update (+)
                     curr_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', p_item).execute()
                     curr = float(curr_res.data[0]['current_stock'])
                     supabase.table("sku_master").update({"current_stock": curr + p_qty}).eq('\"Ingerdient Name\"', p_item).execute()
-                    
-                    # Accounts Log
-                    supabase.table("accounts").insert({
-                        "date": str(p_date), "type": "Purchase", "category": "Raw Material", 
-                        "item_name": p_item, "amount": p_amt, "qty": p_qty, "unit": selected_unit
-                    }).execute()
-                    st.success(f"{p_item} Stock Updated & Accounts Logged!")
+                    supabase.table("accounts").insert({"date": str(p_date), "type": "Purchase", "category": "Raw Material", "item_name": p_item, "amount": p_amt, "qty": p_qty, "unit": s_unit}).execute()
+                    st.success("Purchase Logged!")
 
             elif acc_type == "Fixed Expenses":
                 st.markdown("### 💸 Fixed Expense Entry")
                 e_date = st.date_input("Expense Date", datetime.date.today(), key="e_date")
                 e_cat = st.selectbox("Category", ["Rent", "EB Bill", "Salary", "Gas", "Maintenance", "Other"], key="e_cat")
                 e_amt = st.number_input("Amount", min_value=0.0, key="e_amt")
-                e_note = st.text_area("Notes", key="e_note")
-                if st.button("Save Fixed Expense"):
-                    supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt, "notes": e_note}).execute()
-                    st.success("Fixed Expense Recorded!")
+                if st.button("Save Expense"):
+                    supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt}).execute()
+                    st.success("Expense Recorded!")
 
-            elif acc_type == "View Expenses Report":
-                st.markdown("### 📊 Overall Expense Summary")
+            # --- H4: SETTLEMENTS (Inserting directly into accounts table) ---
+            elif acc_type == "Settlements":
+                st.markdown("### 💳 Online Channel Settlements")
+                st.info("Zomato/Swiggy payouts-ai inge record pannunga.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    s_date = st.date_input("Settlement Date", datetime.date.today())
+                    s_channel = st.selectbox("Platform", ["Zomato", "Swiggy", "Magicpin", "Other"])
+                    s_gross = st.number_input("Gross Sales (Bill Value)", min_value=0.0)
+                with col2:
+                    s_comm = st.number_input("Commissions & Deductions", min_value=0.0)
+                    s_net = s_gross - s_comm
+                    st.success(f"Net Revenue: ₹{s_net:,.2f}")
+                
+                if st.button("Log Settlement Revenue"):
+                    # Direct insert into the existing 'accounts' table
+                    supabase.table("accounts").insert({
+                        "date": str(s_date), 
+                        "type": "Revenue", 
+                        "category": "Online Settlement", 
+                        "item_name": s_channel, 
+                        "amount": s_net,
+                        "notes": f"Gross: {s_gross}, Comm: {s_comm}"
+                    }).execute()
+                    st.success(f"₹{s_net} added to Accounts as Revenue from {s_channel}!")
+
+            elif acc_type == "View Accounts Report":
+                st.markdown("### 📊 Overall Cash Flow")
                 acc_res = supabase.table("accounts").select("*").order("date", desc=True).execute()
                 if acc_res.data:
                     df_acc = pd.DataFrame(acc_res.data)
-                    total_spent = df_acc['amount'].sum()
-                    st.metric("Total Expenses (₹)", f"{total_spent:,.2f}")
-                    st.dataframe(df_acc[['date', 'type', 'category', 'item_name', 'amount', 'notes']])
-                else:
-                    st.info("No expense records found.")
-
+                    # Simple Profit/Loss Metric
+                    revenue = df_acc[df_acc['type'] == 'Revenue']['amount'].sum()
+                    expense = df_acc[df_acc['type'] != 'Revenue']['amount'].sum()
+                    st.metric("Net Cash Flow (Revenue - Expense)", f"₹{(revenue - expense):,.2f}", delta=f"Rev: ₹{revenue:,.0f}")
+                    st.dataframe(df_acc)
         # 3. WASTAGE & NON-REVENUE TRACKER
         elif admin_tab == "Wastage Entry":
             st.subheader("🗑️ Non-Revenue & Loss Entry")
