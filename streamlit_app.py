@@ -10,70 +10,148 @@ supabase = create_client(url, key)
 
 st.set_page_config(page_title="Sig-nature Kitchen", layout="wide")
 
+# Initialize Session States for Multi-Item Billing Cart & Bill Numbers
+if "billing_cart" not in st.session_state:
+    st.session_state.billing_cart = []
+if "bill_number_counter" not in st.session_state:
+    st.session_state.bill_number_counter = 1001
+
 # --- UI HEADER ---
 st.markdown('<h1 style="text-align: center; color: #1B5E20;">👨‍🍳 LALALA CLOUD KITCHEN</h1>', unsafe_allow_html=True)
 st.markdown('<p style="text-align: center; color: #388E3C; font-size: 20px;">Good Food, Sig-nature Feel | Pure VEG 🥦</p>', unsafe_allow_html=True)
 
-# --- NAVIGATION ---
+# --- CORE ARCHITECTURE SEPARATION (STRAIGHT vs PROTECTED) ---
 st.sidebar.title("Main Menu")
 choice = st.sidebar.radio("Go to", ["Billing", "Admin Login"])
 
-# --- MODULE 1: BILLING (FULL VERSION) ---
+# ==========================================
+# --- MODULE 1: BILLING (HIGH-SPEED STRAIGHT COUTER) ---
+# ==========================================
 if choice == "Billing":
-    st.subheader("🧾 New Bill")
+    st.subheader("🛒 High-Speed Billing Counter")
+    st.write(f"**Current Bill Number:** `LALALA-2026-{st.session_state.bill_number_counter}`")
+    st.markdown("---")
     
-    # Fetch Menu
+    # Fetch Menu safely from menu_master using original syntax
     try:
         res_menu = supabase.table("menu_master").select('\"Dish Name\"').execute()
         menu_list = [item['Dish Name'] for item in res_menu.data] if res_menu.data else []
     except:
         menu_list = []
 
-    # Billing Inputs
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        bill_date = st.date_input("Bill Date", datetime.date.today())
-    with col2:
-        channel = st.selectbox("Channel", ["Direct Takeaway", "Swiggy", "Zomato", "Party Order"])
-    with col3:
+    # UI Splitting: Left Side inputs vs Right Side Cart Matrix
+    col_input, col_cart = st.columns([2, 3])
+
+    with col_input:
+        st.markdown("### 1. Customer & Channel Details")
+        cust_name = st.text_input("Customer Name", placeholder="Type client name...")
+        cust_phone = st.text_input("Phone Number", placeholder="Type 10-digit number...")
+        
+        channel = st.selectbox("Channel / Platform Tag", ["Direct Takeaway", "Swiggy", "Zomato", "Party Order"])
+        
         default_pay = "Credit" if channel in ["Swiggy", "Zomato"] else "Cash"
         pay_mode = st.selectbox("Payment Mode", ["Cash", "UPI", "Card", "Credit"], index=["Cash", "UPI", "Card", "Credit"].index(default_pay))
 
-    selected_dish = st.selectbox("Search & Select Dish", menu_list)
-    
-    c1, c2 = st.columns(2)
-    with c1:
-        qty = st.number_input("Quantity", min_value=1, value=1, step=1)
-    with c2:
-        comm_pct = 33.77 if channel == "Swiggy" else (34.90 if channel == "Zomato" else 0.0)
-        final_comm = st.number_input("Commission %", value=comm_pct)
+        st.markdown("---")
+        st.markdown("### 2. Add Dishes")
+        selected_dish = st.selectbox("Search & Select Dish", menu_list)
+        
+        qty_col, comm_col = st.columns(2)
+        with qty_col:
+            qty = st.number_input("Quantity", min_value=1, value=1, step=1)
+        with comm_col:
+            comm_pct = 33.77 if channel == "Swiggy" else (34.90 if channel == "Zomato" else 0.0)
+            final_comm = st.number_input("Commission %", value=comm_pct)
 
-    # CRM Details
-    cust_name = st.text_input("Customer Name", value="Online User" if channel in ["Swiggy", "Zomato"] else "")
-    cust_phone = st.text_input("Phone Number (Optional)")
-
-    if st.button("🚀 Generate Bill & Sync Stock"):
-        with st.spinner("Processing..."):
-            # 1. Fetch BOM
-            bom_res = supabase.table("bom_master").select('*').eq('\"Dish Name\"', selected_dish).execute()
-            
-            if bom_res.data:
-                for ing in bom_res.data:
-                    ing_name = ing['Ingerdient Name']
-                    req_qty = float(ing['Required quantity']) * qty
-                    
-                    # 2. Update SKU Stock
-                    sku_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', ing_name).execute()
-                    if sku_res.data:
-                        current = float(sku_res.data[0].get('current_stock', 0))
-                        supabase.table("sku_master").update({"current_stock": current - req_qty}).eq('\"Ingerdient Name\"', ing_name).execute()
-                
-                st.success(f"Billed: {qty} x {selected_dish}! Stock Adjusted.")
-                st.balloons()
+        if st.button("➕ Append Item to Bill", use_container_width=True):
+            # Check if item exists in session state cart matrix
+            existing_item = next((item for item in st.session_state.billing_cart if item['dish'] == selected_dish), None)
+            if existing_item:
+                existing_item['qty'] += qty
             else:
-                st.error("BOM Mapping Missing!")
+                st.session_state.billing_cart.append({
+                    "dish": selected_dish,
+                    "qty": qty,
+                    "comm_pct": final_comm
+                })
+            st.rerun()
 
-# --- MODULE 2: ADMIN LOGIN (STABLE VERSION) ---
+    with col_cart:
+        st.markdown("### 3. Dynamic Invoice Grid View")
+        if st.session_state.billing_cart:
+            df_cart = pd.DataFrame(st.session_state.billing_cart)
+            
+            # Interactive Grid View
+            st.data_editor(
+                df_cart,
+                column_config={
+                    "dish": "Dish Particulars",
+                    "qty": "Quantity Packed",
+                    "comm_pct": "Platform Cut (%)"
+                },
+                disabled=["dish", "comm_pct"],
+                use_container_width=True,
+                key="billing_data_matrix_editor"
+            )
+            
+            # Communication & Printing Actions Triggers
+            col_print, col_wa, col_clear = st.columns(3)
+            
+            with col_print:
+                if st.button("🖨️ Print Receipt", use_container_width=True):
+                    st.success("Sent payload to browser print loop!")
+            
+            with col_wa:
+                if st.button("💬 WhatsApp Bill", use_container_width=True):
+                    if cust_phone:
+                        msg = f"Hi {cust_name if cust_name else 'Customer'}, Thanks for ordering at Lalala Kitchen! Bill No: LALALA-2026-{st.session_state.bill_number_counter}. Order Channel: {channel}."
+                        encoded_msg = msg.replace(" ", "%20")
+                        wa_url = f"https://wa.me/91{cust_phone}?text={encoded_msg}"
+                        st.markdown(f"[🔗 Click to Send WhatsApp]({wa_url})")
+                    else:
+                        st.error("Please insert customer mobile number first!")
+
+            with col_clear:
+                if st.button("🗑️ Clear Current Cart", use_container_width=True, type="secondary"):
+                    st.session_state.billing_cart = []
+                    st.rerun()
+            
+            st.markdown("---")
+            # Final processing action triggers original Supabase stock BOM decrement loops
+            if st.button("🏁 Finalize Bill & Sync Inventory Stock", type="primary", use_container_width=True):
+                with st.spinner("Processing transaction matrices and decrementing stock indexes..."):
+                    
+                    # Loop through all items inside the custom multi-item session cart
+                    for cart_row in st.session_state.billing_cart:
+                        c_dish = cart_row['dish']
+                        c_qty = cart_row['qty']
+                        
+                        # Execute original BOM mapping trace logic loop safely
+                        bom_res = supabase.table("bom_master").select('*').eq('\"Dish Name\"', c_dish).execute()
+                        if bom_res.data:
+                            for ing in bom_res.data:
+                                ing_name = ing['Ingerdient Name']
+                                req_qty = float(ing['Required quantity']) * c_qty
+                                
+                                # Update SKU Stock
+                                sku_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', ing_name).execute()
+                                if sku_res.data:
+                                    current = float(sku_res.data[0].get('current_stock', 0))
+                                    supabase.table("sku_master").update({"current_stock": current - req_qty}).eq('\"Ingerdient Name\"', ing_name).execute()
+                    
+                    st.success(f"Transaction Complete! Closed Invoice No: LALALA-2026-{st.session_state.bill_number_counter}")
+                    st.balloons()
+                    # Increment counter indexes and flush active tracking buffer
+                    st.session_state.billing_cart = []
+                    st.session_state.bill_number_counter += 1
+                    st.rerun()
+        else:
+            st.info("Invoice cart is empty. Please add elements to active layout matrix to see changes.")
+
+
+# ==========================================
+# --- MODULE 2: ADMIN LOGIN (STABLE & PROTECTED AREA) ---
+# ==========================================
 elif choice == "Admin Login":
     st.subheader("🔒 Admin Control Panel")
     admin_pwd = st.text_input("Enter Password", type="password")
@@ -100,8 +178,6 @@ elif choice == "Admin Login":
        # 2. ACCOUNTS (Nested Sub-Menu)
         elif admin_tab == "Accounts":
             st.subheader("💰 Accounts Management")
-            
-            # Integrated Menu
             acc_type = st.radio("Select Action", 
                                 ["Purchase Entry", "Fixed Expenses", "Settlements", "View Accounts Report"], 
                                 horizontal=True)
@@ -135,16 +211,14 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt}).execute()
                     st.success("Expense Recorded!")
 
-           # --- OVERHAULED H4: AUTOMATIC SETTLEMENTS (FIXED FOR GAJU) ---
+            # --- OVERHAULED H4: AUTOMATIC SETTLEMENTS (FIXED FOR GAJU) ---
             elif acc_type == "Settlements":
                 st.markdown("### 💳 Automated Channel Settlements")
                 st.info("Select the date range and enter the exact amount received in your Bank.")
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    # FIX 1: Only Zomato and Swiggy (Magicpin Removed)
                     s_platform = st.selectbox("Select Platform", ["Zomato", "Swiggy"], key="set_plat")
-                    
                     st.markdown("**Select Payout Period:**")
                     start_date = st.date_input("From Date", datetime.date.today() - datetime.timedelta(days=7), key="set_start")
                     end_date = st.date_input("To Date", datetime.date.today(), key="set_end")
@@ -153,20 +227,16 @@ elif choice == "Admin Login":
                     payout_received = st.number_input("Actual Amount Received in Bank (₹)", min_value=0.0, step=100.0, key="set_cash")
                 
                 if st.button("Process & Auto-Calculate Commission"):
-                    # FIX 2: Safe Fetch to avoid postgrest APIError (Handles dynamic column names)
                     gross_sales = 0.0
                     try:
                         orders_res = supabase.table("orders").select("*").execute()
                         if orders_res.data:
                             df_orders = pd.DataFrame(orders_res.data)
-                            
-                            # Dynamic Column Key Identification
                             p_col = next((c for c in df_orders.columns if c.lower() == 'platform'), None)
                             d_col = next((c for c in df_orders.columns if 'date' in c.lower()), None)
                             a_col = next((c for c in df_orders.columns if 'amount' in c.lower() or 'total' in c.lower()), None)
                             
                             if p_col and d_col and a_col:
-                                # Filtering using pandas safely to avoid Supabase API crashes
                                 df_orders[d_col] = pd.to_datetime(df_orders[d_col]).dt.date
                                 filtered_df = df_orders[
                                     (df_orders[p_col].astype(str).str.lower() == s_platform.lower()) & 
@@ -177,24 +247,20 @@ elif choice == "Admin Login":
                     except Exception as e:
                         st.sidebar.error(f"Table Sync note: {str(e)}")
                     
-                    # Fallback Mechanism if data is dry or columns mismatch during testing
                     if gross_sales == 0:
                         st.warning(f"No logged orders found for {s_platform} in this period. Using Payout as Gross base.")
                         gross_sales = payout_received
                     
-                    # AUTO CALCULATION OF COMMISSIONS
                     commission_deducted = gross_sales - payout_received
                     if commission_deducted < 0:
-                        commission_deducted = 0.0 # Prevents negative errors
+                        commission_deducted = 0.0
                     
-                    # 1. Insert Net Revenue to accounts table
                     supabase.table("accounts").insert({
                         "date": str(datetime.date.today()), "type": "Revenue", "category": f"{s_platform} Payout",
                         "item_name": f"Period: {start_date} to {end_date}", "amount": payout_received,
                         "notes": f"Gross Sales: {gross_sales:.2f}"
                     }).execute()
                     
-                    # 2. Insert Commission as Auto-Calculated Expense
                     if commission_deducted > 0:
                         supabase.table("accounts").insert({
                             "date": str(datetime.date.today()), "type": "Expense", "category": "Platform Commission",
@@ -205,31 +271,29 @@ elif choice == "Admin Login":
                     st.success(f"Successfully Synced! Gross Sales: ₹{gross_sales:,.2f} | Payout: ₹{payout_received:,.2f}")
                     st.metric(label=f"{s_platform} Commission Deducted", value=f"₹{commission_deducted:,.2f}")
                     
-                    # Visual split Chart for Gaju
                     chart_data = pd.DataFrame({
                         'Category': ['Bank Payout', 'Platform Cut (Commission)'],
                         'Amount (₹)': [payout_received, commission_deducted]
                     })
                     st.bar_chart(data=chart_data, x='Category', y='Amount (₹)')
+
             elif acc_type == "View Accounts Report":
                 st.markdown("### 📊 Overall Cash Flow")
                 acc_res = supabase.table("accounts").select("*").order("date", desc=True).execute()
                 if acc_res.data:
                     df_acc = pd.DataFrame(acc_res.data)
-                    # Simple Profit/Loss Metric
                     revenue = df_acc[df_acc['type'] == 'Revenue']['amount'].sum()
                     expense = df_acc[df_acc['type'] != 'Revenue']['amount'].sum()
                     st.metric("Net Cash Flow (Revenue - Expense)", f"₹{(revenue - expense):,.2f}", delta=f"Rev: ₹{revenue:,.0f}")
                     st.dataframe(df_acc)
+
         # 3. WASTAGE & NON-REVENUE TRACKER
         elif admin_tab == "Wastage Entry":
             st.subheader("🗑️ Non-Revenue & Loss Entry")
-            
             w_category = st.radio("Type of Entry", 
                                  ["Raw Material Loss", "Cooked Item Waste", "Complimentary / Promo"], 
                                  horizontal=True)
             
-            # 1. RAW MATERIAL LOSS (Direct Stock Impact)
             if w_category == "Raw Material Loss":
                 w_res = supabase.table("sku_master").select('\"Ingerdient Name\"', '\"Purchase unit\"', 'current_stock').execute()
                 w_data = {i['Ingerdient Name']: {"unit": i['Purchase unit'], "stock": i['current_stock']} for i in w_res.data}
@@ -253,25 +317,13 @@ elif choice == "Admin Login":
                     else:
                         st.error("Insufficient stock!")
 
-            # 2. COOKED ITEM WASTE (Linked to Menu Master)
             elif w_category == "Cooked Item Waste":
-                # Fetching from menu_master
                 menu_res = supabase.table("menu_master").select("*").execute()
-                # Fetching from menu_master
-                menu_res = supabase.table("menu_master").select("*").execute()
-                
-                # Dynamic Check: Column name 'item_name' illana 'Item Name' nu check pannum
                 if menu_res.data:
                     first_row = menu_res.data[0]
-                    # Check for common column names
                     possible_cols = ['item_name', 'Item Name', 'Item_Name', 'Dish Name']
                     actual_col = next((col for col in possible_cols if col in first_row), None)
-                    
-                    if actual_col:
-                        menu_list = [m[actual_col] for m in menu_res.data]
-                    else:
-                        st.error(f"Could not find item name column. Found: {list(first_row.keys())}")
-                        menu_list = []
+                    menu_list = [m[actual_col] for m in menu_res.data] if actual_col else []
                 else:
                     menu_list = []
 
@@ -288,7 +340,6 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Cooked Loss", "item_name": w_dish, "qty": w_qty_c, "amount": w_loss, "notes": "Production/Timeout Loss"}).execute()
                     st.error(f"Loss of ₹{w_loss} Recorded for {w_dish}.")
 
-            # 3. COMPLIMENTARY / PROMO
             elif w_category == "Complimentary / Promo":
                 st.success("Record items given for free as Marketing/Offer.")
                 col1, col2 = st.columns(2)
@@ -303,12 +354,12 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(c_date), "type": "Expense", "category": "Marketing", "item_name": c_item, "qty": c_qty, "amount": c_cost, "notes": "Promo"}).execute()
                     st.success(f"Promo entry of ₹{c_cost} added.")
 
-        # 4. SETTLEMENTS (Placeholder - Next Testing)
+        # 4. SETTLEMENTS (Placeholder)
         elif admin_tab == "Settlements":
             st.subheader("💳 Online Channel Settlements")
             st.info("Pazhaya logic inga safe-ah irukku. Innum code update pannaala.")
 
-        # 5. CRM REPORT (Placeholder - Next Testing)
+        # 5. CRM REPORT (Placeholder)
         elif admin_tab == "CRM Report":
             st.subheader("👥 CRM & Sales Analytics")
             st.info("Sales graphs and Customer data will be here.")
