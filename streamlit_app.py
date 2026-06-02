@@ -3,7 +3,7 @@ from supabase import create_client
 import datetime
 import pandas as pd
 
-# --- CONNECTION ---
+# --- CONNECTION PARAMETERS (CAPITAL ALPHABETS SAFEGUARD) ---
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
@@ -25,19 +25,26 @@ st.sidebar.title("Main Menu")
 choice = st.sidebar.radio("Go to", ["Billing", "Admin Login"])
 
 # ==========================================
-# --- MODULE 1: BILLING (HIGH-SPEED STRAIGHT COUTER) ---
+# --- MODULE 1: BILLING (HIGH-SPEED COUNTER WITH IN-DEPTH UPGRADES) ---
 # ==========================================
 if choice == "Billing":
     st.subheader("🛒 High-Speed Billing Counter")
     st.write(f"**Current Bill Number:** `LALALA-2026-{st.session_state.bill_number_counter}`")
     st.markdown("---")
     
-    # Fetch Menu safely from menu_master using original syntax
+    # Fetch Menu safely from menu_master using original syntax with accurate rates
     try:
-        res_menu = supabase.table("menu_master").select('\"Dish Name\"').execute()
-        menu_list = [item['Dish Name'] for item in res_menu.data] if res_menu.data else []
+        res_menu = supabase.table("menu_master").select("*").execute()
+        if res_menu.data:
+            # Creating dictionaries to store rate mappings smoothly
+            menu_list = [item.get('Dish Name') for item in res_menu.data if item.get('Dish Name')]
+            menu_rates = {item.get('Dish Name'): float(item.get('Rate', 0) if item.get('Rate') else item.get('Price', 0)) for item in res_menu.data}
+        else:
+            menu_list = []
+            menu_rates = {}
     except:
         menu_list = []
+        menu_rates = {}
 
     # UI Splitting: Left Side inputs vs Right Side Cart Matrix
     col_input, col_cart = st.columns([2, 3])
@@ -56,6 +63,10 @@ if choice == "Billing":
         st.markdown("### 2. Add Dishes")
         selected_dish = st.selectbox("Search & Select Dish", menu_list)
         
+        # Get live rate automatically based on menu master data
+        live_rate = menu_rates.get(selected_dish, 0.0)
+        st.caption(f"Standard Price fetched from Database: **₹{live_rate:.2f}**")
+        
         qty_col, comm_col = st.columns(2)
         with qty_col:
             qty = st.number_input("Quantity", min_value=1, value=1, step=1)
@@ -72,6 +83,7 @@ if choice == "Billing":
                 st.session_state.billing_cart.append({
                     "dish": selected_dish,
                     "qty": qty,
+                    "rate": live_rate,
                     "comm_pct": final_comm
                 })
             st.rerun()
@@ -81,18 +93,27 @@ if choice == "Billing":
         if st.session_state.billing_cart:
             df_cart = pd.DataFrame(st.session_state.billing_cart)
             
-            # Interactive Grid View
+            # Dynamic calculation tracking logic
+            df_cart['Amount (₹)'] = df_cart['qty'] * df_cart['rate']
+            
+            # 1. Clean Display Layout Logic (Platform cut strictly hidden from grid layout)
             st.data_editor(
-                df_cart,
+                df_cart[['dish', 'qty', 'rate', 'Amount (₹)']],
                 column_config={
                     "dish": "Dish Particulars",
                     "qty": "Quantity Packed",
-                    "comm_pct": "Platform Cut (%)"
+                    "rate": "Unit Price (₹)",
+                    "Amount (₹)": "Subtotal (₹)"
                 },
-                disabled=["dish", "comm_pct"],
+                disabled=["dish", "rate", "Amount (₹)"],
                 use_container_width=True,
-                key="billing_data_matrix_editor"
+                key="billing_clean_matrix_editor"
             )
+            
+            # 2. Dynamic live calculation metrics block
+            bill_total = df_cart['Amount (₹)'].sum()
+            st.markdown(f"### 📈 **Bill Total: ₹{bill_total:,.2f}**")
+            st.markdown("---")
             
             # Communication & Printing Actions Triggers
             col_print, col_wa, col_clear = st.columns(3)
@@ -104,7 +125,7 @@ if choice == "Billing":
             with col_wa:
                 if st.button("💬 WhatsApp Bill", use_container_width=True):
                     if cust_phone:
-                        msg = f"Hi {cust_name if cust_name else 'Customer'}, Thanks for ordering at Lalala Kitchen! Bill No: LALALA-2026-{st.session_state.bill_number_counter}. Order Channel: {channel}."
+                        msg = f"Hi {cust_name if cust_name else 'Customer'}, Thanks for ordering at Lalala Kitchen! Bill No: LALALA-2026-{st.session_state.bill_number_counter}. Total Amount: ₹{bill_total:.2f}. Order Channel: {channel}."
                         encoded_msg = msg.replace(" ", "%20")
                         wa_url = f"https://wa.me/91{cust_phone}?text={encoded_msg}"
                         st.markdown(f"[🔗 Click to Send WhatsApp]({wa_url})")
@@ -175,7 +196,7 @@ elif choice == "Admin Login":
                     st.warning("Immediate Purchase Needed:")
                     st.write(low[['Ingerdient Name', 'current_stock', 'Purchase unit']])
 
-       # 2. ACCOUNTS (Nested Sub-Menu)
+        # 2. ACCOUNTS (Nested Sub-Menu)
         elif admin_tab == "Accounts":
             st.subheader("💰 Accounts Management")
             acc_type = st.radio("Select Action", 
@@ -211,7 +232,6 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt}).execute()
                     st.success("Expense Recorded!")
 
-            # --- OVERHAULED H4: AUTOMATIC SETTLEMENTS (FIXED FOR GAJU) ---
             elif acc_type == "Settlements":
                 st.markdown("### 💳 Automated Channel Settlements")
                 st.info("Select the date range and enter the exact amount received in your Bank.")
@@ -354,12 +374,7 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(c_date), "type": "Expense", "category": "Marketing", "item_name": c_item, "qty": c_qty, "amount": c_cost, "notes": "Promo"}).execute()
                     st.success(f"Promo entry of ₹{c_cost} added.")
 
-        # 4. SETTLEMENTS (Placeholder)
-        elif admin_tab == "Settlements":
-            st.subheader("💳 Online Channel Settlements")
-            st.info("Pazhaya logic inga safe-ah irukku. Innum code update pannaala.")
-
-        # 5. CRM REPORT (Placeholder)
+        # 4. SETTLEMENTS & 5. CRM (Placeholders)
         elif admin_tab == "CRM Report":
             st.subheader("👥 CRM & Sales Analytics")
             st.info("Sales graphs and Customer data will be here.")
