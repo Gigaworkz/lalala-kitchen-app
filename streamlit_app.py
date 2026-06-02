@@ -277,4 +277,144 @@ elif choice == "Admin Login":
                             d_col = next((c for c in df_orders.columns if 'date' in c.lower()), None)
                             a_col = next((c for c in df_orders.columns if 'amount' in c.lower() or 'total' in c.lower()), None)
                             
-                            if p_col
+                            if p_col and d_col and a_col:
+                                df_orders[d_col] = pd.to_datetime(df_orders[d_col]).dt.date
+                                filtered_df = df_orders[
+                                    (df_orders[p_col].astype(str).str.lower() == s_platform.lower()) & 
+                                    (df_orders[d_col] >= start_date) & 
+                                    (df_orders[d_col] <= end_date)
+                                ]
+                                gross_sales = float(filtered_df[a_col].sum())
+                    except Exception as e:
+                        st.error(f"Sync Note: {str(e)}")
+                    
+                    if gross_sales == 0:
+                        st.warning(f"No transactions found for {s_platform}. Using Payout as base index value.")
+                        gross_sales = payout_received
+                    
+                    commission_deducted = gross_sales - payout_received
+                    if commission_deducted < 0: commission_deducted = 0.0
+                    
+                    supabase.table("accounts").insert({
+                        "date": str(datetime.date.today()), "type": "Revenue", "category": f"{s_platform} Payout",
+                        "item_name": f"Period: {start_date} to {end_date}", "amount": payout_received,
+                        "notes": f"Gross Sales: {gross_sales:.2f}"
+                    }).execute()
+                    
+                    if commission_deducted > 0:
+                        supabase.table("accounts").insert({
+                            "date": str(datetime.date.today()), "type": "Expense", "category": "Platform Commission",
+                            "item_name": s_platform, "amount": commission_deducted,
+                            "notes": f"Auto cut for period {start_date} to {end_date}"
+                        }).execute()
+                    
+                    st.success(f"Successfully Synced! Gross: ₹{gross_sales:,.2f} | Payout: ₹{payout_received:,.2f}")
+                    st.metric(label=f"{s_platform} Commission Deducted", value=f"₹{commission_deducted:,.2f}")
+                    
+                    chart_data = pd.DataFrame({
+                        'Category': ['Bank Payout', 'Platform Cut (Commission)'],
+                        'Amount (₹)': [payout_received, commission_deducted]
+                    })
+                    st.bar_chart(data=chart_data, x='Category', y='Amount (₹)')
+
+        # 3. WASTAGE & NON-REVENUE TRACKER
+        elif admin_tab == "Wastage Entry":
+            st.subheader("🗑️ Non-Revenue & Loss Entry")
+            w_category = st.radio("Type of Entry", ["Raw Material Loss", "Cooked Item Waste", "Complimentary / Promo"], horizontal=True)
+            
+            try:
+                m_res = supabase.table("menu_master").select("*").execute()
+                possible_cols = ['item_name', 'Item Name', 'Item_Name', 'Dish Name']
+                first_row = m_res.data[0] if m_res.data else {}
+                actual_col = next((col for col in possible_cols if col in first_row), None)
+                system_dish_list = [m[actual_col] for m in m_res.data] if actual_col else []
+            except:
+                system_dish_list = []
+
+            if w_category == "Raw Material Loss":
+                w_res = supabase.table("sku_master").select('\"Ingerdient Name\"', '\"Purchase unit\"', 'current_stock').execute()
+                w_data = {i['Ingerdient Name']: {"unit": i['Purchase unit'], "stock": i['current_stock']} for i in w_res.data}
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    w_date = st.date_input("Date", datetime.date.today(), key="w_raw_date")
+                    w_item = st.selectbox("Select Ingredient", list(w_data.keys()), key="w_raw_item")
+                    s_unit, s_stock = w_data[w_item]["unit"], w_data[w_item]["stock"]
+                    st.warning(f"Live Stock: **{s_stock} {s_unit}**")
+                with col2:
+                    w_qty = st.number_input(f"Quantity ({s_unit})", min_value=0.01, key="w_raw_qty")
+                    w_reason = st.selectbox("Reason", ["Spoilage", "Expired", "Preparation Error"], key="w_raw_res")
+
+                if st.button("Record Raw Loss"):
+                    if w_qty <= s_stock:
+                        new_s = float(s_stock) - float(w_qty)
+                        supabase.table("sku_master").update({"current_stock": new_s}).eq('\"Ingerdient Name\"', w_item).execute()
+                        supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Raw Loss", "item_name": w_item, "qty": w_qty, "amount": 0, "notes": w_reason}).execute()
+                        st.success("Stock Adjusted Successfully!")
+                    else:
+                        st.error("Insufficient stock!")
+
+            elif w_category == "Cooked Item Waste":
+                st.info("Note: Select cooked dishes from your Menu Master.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    w_date = st.date_input("Date", datetime.date.today(), key="w_cook_date")
+                    w_dish = st.selectbox("Select Cooked Dish", system_dish_list, key="w_cook_select")
+                with col2:
+                    w_qty_c = st.number_input("Quantity (Portions)", min_value=1, key="w_cook_qty")
+                    w_loss = st.number_input("Estimated Production Cost (₹)", min_value=0.0, key="w_cook_val")
+                
+                if st.button("Record Cooked Waste"):
+                    supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Cooked Loss", "item_name": w_dish, "qty": w_qty_c, "amount": w_loss, "notes": "Production/Timeout Loss"}).execute()
+                    st.error(f"Loss of ₹{w_loss} Recorded for {w_dish}.")
+
+            elif w_category == "Complimentary / Promo":
+                st.success("Record items given for free as Marketing/Offer.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    c_date = st.date_input("Date", datetime.date.today(), key="c_date")
+                    c_item = st.selectbox("Select Dish (From Menu Master)", system_dish_list, key="c_name_select")
+                with col2:
+                    c_qty = st.number_input("Total Portions", min_value=1, key="c_qty")
+                    c_cost = st.number_input("Total Marketing Cost (₹)", min_value=0.0, key="c_val")
+                
+                if st.button("Record Promo Entry"):
+                    supabase.table("accounts").insert({"date": str(c_date), "type": "Expense", "category": "Marketing", "item_name": c_item, "qty": c_qty, "amount": c_cost, "notes": "Promo Offer Allocation"}).execute()
+                    st.success(f"Promo entry of ₹{c_cost} added safely for {c_item}.")
+
+        # 4. REPORT ANALYTICS (Clean & Highly Consolidated Dashboard layout)
+        elif admin_tab == "Report Analytics":
+            st.subheader("📊 Centralized Business Intelligence Dashboard")
+            
+            # Now featuring 2 robust, high-value data analytics tabs
+            tab_financials, tab_crm = st.tabs([
+                "💰 Financial Reports (Cash Flow Ledger)", 
+                "👥 CRM & Customer Base Reports"
+            ])
+            
+            with tab_financials:
+                st.markdown("### 📈 Overall Cash Flow Statements")
+                acc_res = supabase.table("accounts").select("*").order("date", desc=True).execute()
+                if acc_res.data:
+                    df_acc = pd.DataFrame(acc_res.data)
+                    revenue = df_acc[df_acc['type'] == 'Revenue']['amount'].sum()
+                    expense = df_acc[df_acc['type'] != 'Revenue']['amount'].sum()
+                    st.metric("Net Cash Flow (Revenue - Expense)", f"₹{(revenue - expense):,.2f}", delta=f"Rev: ₹{revenue:,.0f}")
+                    st.dataframe(df_acc, use_container_width=True)
+                else:
+                    st.info("No accounting transaction ledger indexes located.")
+
+            with tab_crm:
+                st.markdown("### 👥 Consolidated Customer Records Ledger (CRM)")
+                try:
+                    crm_res = supabase.table("orders").select("*").execute()
+                    if crm_res.data:
+                        df_crm = pd.DataFrame(crm_res.data)
+                        st.dataframe(df_crm[['date', 'bill_number', 'customer_name', 'phone_number', 'platform', 'amount']], use_container_width=True)
+                    else:
+                        st.info("CRM sales log data streams are currently empty.")
+                except Exception as crm_ex:
+                    st.info("No active data entries synchronized yet inside orders metrics table.")
+
+    elif admin_pwd != "":
+        st.error("Incorrect Password.")
