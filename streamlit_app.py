@@ -33,7 +33,7 @@ if choice == "Billing":
     st.write(f"**Current Bill Number:** `{current_bill_id}`")
     st.markdown("---")
     
-    # Fetch Menu safely from menu_master using original syntax with accurate rates
+    # Fetch Menu safely from menu_master
     try:
         res_menu = supabase.table("menu_master").select("*").execute()
         if res_menu.data:
@@ -46,7 +46,6 @@ if choice == "Billing":
         menu_list = []
         menu_rates = {}
 
-    # UI Splitting: Left Side inputs vs Right Side Cart Matrix
     col_input, col_cart = st.columns([2, 3])
 
     with col_input:
@@ -55,7 +54,6 @@ if choice == "Billing":
         cust_phone = st.text_input("Phone Number", placeholder="Type 10-digit number...")
         
         channel = st.selectbox("Channel / Platform Tag", ["Direct Takeaway", "Swiggy", "Zomato", "Party Order"])
-        
         default_pay = "Credit" if channel in ["Swiggy", "Zomato"] else "Cash"
         pay_mode = st.selectbox("Payment Mode", ["Cash", "UPI", "Card", "Credit"], index=["Cash", "UPI", "Card", "Credit"].index(default_pay))
 
@@ -63,7 +61,6 @@ if choice == "Billing":
         st.markdown("### 2. Add Dishes")
         selected_dish = st.selectbox("Search & Select Dish", menu_list)
         
-        # Get live rate automatically based on menu master data
         live_rate = menu_rates.get(selected_dish, 0.0)
         st.caption(f"Standard Price fetched from Database: **₹{live_rate:.2f}**")
         
@@ -88,13 +85,11 @@ if choice == "Billing":
             st.rerun()
 
     with col_cart:
-        # Point 1.d: Rename Dynamic Invoice Grid View -> Invoice View
         st.markdown("### 3. Invoice View")
         if st.session_state.billing_cart:
             df_cart = pd.DataFrame(st.session_state.billing_cart)
             df_cart['Amount (₹)'] = df_cart['qty'] * df_cart['rate']
             
-            # Clean Display Layout Grid View (Platform cut strictly hidden from interface)
             st.data_editor(
                 df_cart[['dish', 'qty', 'rate', 'Amount (₹)']],
                 column_config={
@@ -112,10 +107,8 @@ if choice == "Billing":
             st.markdown(f"### 📈 **Bill Total: ₹{bill_total:,.2f}**")
             st.markdown("---")
             
-            # Communication & Printing Actions Triggers
             col_print, col_wa, col_clear = st.columns(3)
             
-            # Point 1.c: Comprehensive Structured Receipt Items Setup Data Block Mapping Loop
             items_text = ""
             for index, row in df_cart.iterrows():
                 items_text += f"• {row['dish']} x {row['qty']} = ₹{row['Amount (₹)']:.2f}\\n"
@@ -126,7 +119,6 @@ if choice == "Billing":
             with col_print:
                 if st.button("🖨️ Print Receipt", use_container_width=True):
                     st.success("Sent payload to browser print loop!")
-                    # Point 1.b: Flush cart buffer variables immediately after action triggers complete execution
                     st.session_state.billing_cart = []
                     st.session_state.bill_number_counter += 1
                     st.rerun()
@@ -134,7 +126,6 @@ if choice == "Billing":
             with col_wa:
                 if st.button("💬 WhatsApp Bill", use_container_width=True):
                     if cust_phone:
-                        # Comprehensive receipt template configuration structure
                         msg = (
                             f"*LALALA CLOUD KITCHEN*\\n"
                             f"----------------------------\\n"
@@ -152,7 +143,6 @@ if choice == "Billing":
                         encoded_msg = msg.replace(" ", "%20").replace("\\n", "%0A")
                         wa_url = f"https://wa.me/91{cust_phone}?text={encoded_msg}"
                         st.markdown(f"[🔗 Click to Send WhatsApp]({wa_url})")
-                        # Point 1.b: Clear variables parameters instantly matching the cycle configuration reset lines
                         st.session_state.billing_cart = []
                         st.session_state.bill_number_counter += 1
                         st.rerun()
@@ -165,13 +155,9 @@ if choice == "Billing":
                     st.rerun()
             
             st.markdown("---")
-            # Final processing action triggers original Supabase stock BOM decrement loops
             if st.button("🏁 Finalize Bill & Sync Inventory Stock", type="primary", use_container_width=True):
-                with st.spinner("Processing transaction matrices and decrementing stock indexes..."):
-                    
-                    # Point 1.a: Push structured dataset arrays target indices records down to Supabase background storage system
+                with st.spinner("Processing transaction matrices and decrementing stock..."):
                     try:
-                        # Consolidated single JSON payload injection containing all metrics parameters required inside the orders table context 
                         supabase.table("orders").insert({
                             "date": str(datetime.date.today()),
                             "bill_number": current_bill_id,
@@ -185,7 +171,6 @@ if choice == "Billing":
                     except Exception as ex:
                         st.sidebar.warning(f"Orders Table Insert Note: {str(ex)}")
 
-                    # Loop through all items inside the custom multi-item session cart for stock decrement
                     for cart_row in st.session_state.billing_cart:
                         c_dish = cart_row['dish']
                         c_qty = cart_row['qty']
@@ -220,7 +205,6 @@ elif choice == "Admin Login":
     if admin_pwd == "140226":
         st.success("Access Granted.")
         
-        # Point 4 & 5: Unified Analytics consolidated layout block definition mapping interface
         admin_tab = st.sidebar.radio("Admin Menu", 
             ["Inventory Status", "Accounts Entry Panel", "Wastage Entry", "Report Analytics"])
         
@@ -229,17 +213,17 @@ elif choice == "Admin Login":
             st.subheader("📦 Live Stock Tracker")
             sku_data = supabase.table("sku_master").select("*").execute()
             if sku_data.data:
-                df = df = pd.DataFrame(sku_data.data)
+                df = pd.DataFrame(sku_data.data)
                 st.dataframe(df)
                 if st.button("Generate Purchase List"):
                     low = df[df['current_stock'].astype(float) < df['Min Stock Level'].astype(float)]
                     st.warning("Immediate Purchase Needed:")
                     st.write(low[['Ingerdient Name', 'current_stock', 'Purchase unit']])
 
-        # 2. ACCOUNTS ENTRY PANEL (Contains Entries only. Point 2: Report component moved)
+        # 2. ACCOUNTS ENTRY PANEL (Now houses Settlements Entry successfully!)
         elif admin_tab == "Accounts Entry Panel":
-            st.subheader("💰 Accounts Management")
-            acc_type = st.radio("Select Action", ["Purchase Entry", "Fixed Expenses"], horizontal=True)
+            st.subheader("💰 Accounts Management & Entries")
+            acc_type = st.radio("Select Action", ["Purchase Entry", "Fixed Expenses", "Channel Payout Settlements"], horizontal=True)
             
             if acc_type == "Purchase Entry":
                 st.markdown("### 🛒 Raw Material Purchase")
@@ -270,100 +254,11 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt}).execute()
                     st.success("Expense Recorded!")
 
-        # 3. WASTAGE & NON-REVENUE TRACKER
-        elif admin_tab == "Wastage Entry":
-            st.subheader("🗑️ Non-Revenue & Loss Entry")
-            w_category = st.radio("Type of Entry", 
-                                 ["Raw Material Loss", "Cooked Item Waste", "Complimentary / Promo"], 
-                                 horizontal=True)
-            
-            # Pre-load menu items dictionary smoothly for cooked/complimentary selections mapping lookup loops
-            try:
-                m_res = supabase.table("menu_master").select("*").execute()
-                possible_cols = ['item_name', 'Item Name', 'Item_Name', 'Dish Name']
-                first_row = m_res.data[0] if m_res.data else {}
-                actual_col = next((col for col in possible_cols if col in first_row), None)
-                system_dish_list = [m[actual_col] for m in m_res.data] if actual_col else []
-            except:
-                system_dish_list = []
-
-            if w_category == "Raw Material Loss":
-                w_res = supabase.table("sku_master").select('\"Ingerdient Name\"', '\"Purchase unit\"', 'current_stock').execute()
-                w_data = {i['Ingerdient Name']: {"unit": i['Purchase unit'], "stock": i['current_stock']} for i in w_res.data}
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    w_date = st.date_input("Date", datetime.date.today(), key="w_raw_date")
-                    w_item = st.selectbox("Select Ingredient", list(w_data.keys()), key="w_raw_item")
-                    s_unit, s_stock = w_data[w_item]["unit"], w_data[w_item]["stock"]
-                    st.warning(f"Live Stock: **{s_stock} {s_unit}**")
-                with col2:
-                    w_qty = st.number_input(f"Quantity ({s_unit})", min_value=0.01, key="w_raw_qty")
-                    w_reason = st.selectbox("Reason", ["Spoilage", "Expired", "Preparation Error"], key="w_raw_res")
-
-                if st.button("Record Raw Loss"):
-                    if w_qty <= s_stock:
-                        new_s = float(s_stock) - float(w_qty)
-                        supabase.table("sku_master").update({"current_stock": new_s}).eq('\"Ingerdient Name\"', w_item).execute()
-                        supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Raw Loss", "item_name": w_item, "qty": w_qty, "amount": 0, "notes": w_reason}).execute()
-                        st.success("Stock Adjusted Successfully!")
-                    else:
-                        st.error("Insufficient stock!")
-
-            elif w_category == "Cooked Item Waste":
-                st.info("Note: Select cooked dishes from your Menu Master.")
-                col1, col2 = st.columns(2)
-                with col1:
-                    w_date = st.date_input("Date", datetime.date.today(), key="w_cook_date")
-                    w_dish = st.selectbox("Select Cooked Dish", system_dish_list, key="w_cook_select")
-                with col2:
-                    w_qty_c = st.number_input("Quantity (Portions)", min_value=1, key="w_cook_qty")
-                    w_loss = st.number_input("Estimated Production Cost (₹)", min_value=0.0, key="w_cook_val")
-                
-                if st.button("Record Cooked Waste"):
-                    supabase.table("accounts").insert({"date": str(w_date), "type": "Wastage", "category": "Cooked Loss", "item_name": w_dish, "qty": w_qty_c, "amount": w_loss, "notes": "Production/Timeout Loss"}).execute()
-                    st.error(f"Loss of ₹{w_loss} Recorded for {w_dish}.")
-
-            # Point 3: Complimentary Promo Dropdown linked with menu master data array values index parameters
-            elif w_category == "Complimentary / Promo":
-                st.success("Record items given for free as Marketing/Offer.")
-                col1, col2 = st.columns(2)
-                with col1:
-                    c_date = st.date_input("Date", datetime.date.today(), key="c_date")
-                    c_item = st.selectbox("Select Dish (From Menu Master)", system_dish_list, key="c_name_select")
-                with col2:
-                    c_qty = st.number_input("Total Portions", min_value=1, key="c_qty")
-                    c_cost = st.number_input("Total Marketing Cost (₹)", min_value=0.0, key="c_val")
-                
-                if st.button("Record Promo Entry"):
-                    supabase.table("accounts").insert({"date": str(c_date), "type": "Expense", "category": "Marketing", "item_name": c_item, "qty": c_qty, "amount": c_cost, "notes": "Promo Offer Allocation"}).execute()
-                    st.success(f"Promo entry of ₹{c_cost} added safely for {c_item}.")
-
-        # Point 2, 4, & 5: Consolidated Central Report Analytics Dashboard Framework Engine
-        elif admin_tab == "Report Analytics":
-            st.subheader("📊 Centralized Business Intelligence Dashboard")
-            
-            # Interactive Tab Views Segmentations Inside Reports Section
-            tab_financials, tab_settlements, tab_crm = st.tabs([
-                "💰 Financial Reports (Cash Flow)", 
-                "💳 Channel Settlements Analytics", 
-                "👥 CRM & Customer Base Reports"
-            ])
-            
-            with tab_financials:
-                st.markdown("### 📈 Overall Cash Flow Statements")
-                acc_res = supabase.table("accounts").select("*").order("date", desc=True).execute()
-                if acc_res.data:
-                    df_acc = pd.DataFrame(acc_res.data)
-                    revenue = df_acc[df_acc['type'] == 'Revenue']['amount'].sum()
-                    expense = df_acc[df_acc['type'] != 'Revenue']['amount'].sum()
-                    st.metric("Net Cash Flow (Revenue - Expense)", f"₹{(revenue - expense):,.2f}", delta=f"Rev: ₹{revenue:,.0f}")
-                    st.dataframe(df_acc, use_container_width=True)
-                else:
-                    st.info("No accounting transaction ledger indexes located.")
-
-            with tab_settlements:
+            # 🔄 Shifted Segment: Channel Settlements Analytics -> Accounts Entry Panel
+            elif acc_type == "Channel Payout Settlements":
                 st.markdown("### 💳 Automated Payout Validation Logic")
+                st.info("Select the date range and enter the exact amount received in your Bank.")
+                
                 col1, col2 = st.columns(2)
                 with col1:
                     s_platform = st.selectbox("Select Platform", ["Zomato", "Swiggy"], key="set_plat")
@@ -382,59 +277,4 @@ elif choice == "Admin Login":
                             d_col = next((c for c in df_orders.columns if 'date' in c.lower()), None)
                             a_col = next((c for c in df_orders.columns if 'amount' in c.lower() or 'total' in c.lower()), None)
                             
-                            if p_col and d_col and a_col:
-                                df_orders[d_col] = pd.to_datetime(df_orders[d_col]).dt.date
-                                filtered_df = df_orders[
-                                    (df_orders[p_col].astype(str).str.lower() == s_platform.lower()) & 
-                                    (df_orders[d_col] >= start_date) & 
-                                    (df_orders[d_col] <= end_date)
-                                ]
-                                gross_sales = float(filtered_df[a_col].sum())
-                    except Exception as e:
-                        st.error(f"Sync Note: {str(e)}")
-                    
-                    if gross_sales == 0:
-                        st.warning(f"No transactions found for {s_platform}. Using Payout as base index value.")
-                        gross_sales = payout_received
-                    
-                    commission_deducted = gross_sales - payout_received
-                    if commission_deducted < 0: commission_deducted = 0.0
-                    
-                    # Log entries straight back down towards storage matrices safely
-                    supabase.table("accounts").insert({
-                        "date": str(datetime.date.today()), "type": "Revenue", "category": f"{s_platform} Payout",
-                        "item_name": f"Period: {start_date} to {end_date}", "amount": payout_received,
-                        "notes": f"Gross Sales: {gross_sales:.2f}"
-                    }).execute()
-                    
-                    if commission_deducted > 0:
-                        supabase.table("accounts").insert({
-                            "date": str(datetime.date.today()), "type": "Expense", "category": "Platform Commission",
-                            "item_name": s_platform, "amount": commission_deducted,
-                            "notes": f"Auto cut for period {start_date} to {end_date}"
-                        }).execute()
-                    
-                    st.success(f"Successfully Synced! Gross: ₹{gross_sales:,.2f} | Payout: ₹{payout_received:,.2f}")
-                    st.metric(label=f"{s_platform} Commission Deducted", value=f"₹{commission_deducted:,.2f}")
-                    
-                    chart_data = pd.DataFrame({
-                        'Category': ['Bank Payout', 'Platform Cut (Commission)'],
-                        'Amount (₹)': [payout_received, commission_deducted]
-                    })
-                    st.bar_chart(data=chart_data, x='Category', y='Amount (₹)')
-
-            with tab_crm:
-                st.markdown("### 👥 Consolidated Customer Records Ledger (CRM)")
-                try:
-                    crm_res = supabase.table("orders").select("*").execute()
-                    if crm_res.data:
-                        df_crm = pd.DataFrame(crm_res.data)
-                        # Clean view containing client insights filters
-                        st.dataframe(df_crm[['date', 'bill_number', 'customer_name', 'phone_number', 'platform', 'amount']], use_container_width=True)
-                    else:
-                        st.info("CRM sales log data streams are currently empty.")
-                except Exception as crm_ex:
-                    st.info("No active data entries synchronized yet inside orders metrics table database indexes.")
-
-    elif admin_pwd != "":
-        st.error("Incorrect Password.")
+                            if p_col
