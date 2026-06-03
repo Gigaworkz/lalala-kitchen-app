@@ -220,7 +220,7 @@ elif choice == "Admin Login":
                     st.warning("Immediate Purchase Needed:")
                     st.write(low[['Ingerdient Name', 'current_stock', 'Purchase unit']])
 
-        # 2. ACCOUNTS ENTRY PANEL (Now houses Settlements Entry successfully!)
+        # 2. ACCOUNTS ENTRY PANEL
         elif admin_tab == "Accounts Entry Panel":
             st.subheader("💰 Accounts Management & Entries")
             acc_type = st.radio("Select Action", ["Purchase Entry", "Fixed Expenses", "Channel Payout Settlements"], horizontal=True)
@@ -254,7 +254,6 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt}).execute()
                     st.success("Expense Recorded!")
 
-            # 🔄 Shifted Segment: Channel Settlements Analytics -> Accounts Entry Panel
             elif acc_type == "Channel Payout Settlements":
                 st.markdown("### 💳 Automated Payout Validation Logic")
                 st.info("Select the date range and enter the exact amount received in your Bank.")
@@ -382,39 +381,55 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(c_date), "type": "Expense", "category": "Marketing", "item_name": c_item, "qty": c_qty, "amount": c_cost, "notes": "Promo Offer Allocation"}).execute()
                     st.success(f"Promo entry of ₹{c_cost} added safely for {c_item}.")
 
-        # 4. REPORT ANALYTICS (Clean & Highly Consolidated Dashboard layout)
+        # 4. REPORT ANALYTICS (Alagu Panna Vendiya New Interface Hub Layout)
         elif admin_tab == "Report Analytics":
             st.subheader("📊 Centralized Business Intelligence Dashboard")
             
-            # Now featuring 2 robust, high-value data analytics tabs
-            tab_financials, tab_crm = st.tabs([
-                "💰 Financial Reports (Cash Flow Ledger)", 
-                "👥 CRM & Customer Base Reports"
+            # 🚨 Global Safety Header: Low Stock Alert Indicator
+            st.error("⚠️ **Proactive Critical Notice: Low Stock Alert Engine Active**")
+            st.caption("Placeholder layout bar: Items falling below minimum threshold boundaries will sequence logs down here safely during testing.")
+            st.markdown("---")
+            
+            # Structural layout for the 7 requested reporting metrics windows
+            tab_workdays, tab_dishes, tab_crm, tab_platforms, tab_wastage, tab_expenses, tab_deadstock = st.tabs([
+                "📅 Working Days Tracker",
+                "🍲 Dish Performance Matrix",
+                "👥 Customer Retention (CRM)",
+                "📱 Platform Individual Sales",
+                "🗑️ Food Waste SKU Analysis",
+                "💸 Monthly Expenses Breakdown",
+                "🛑 3-Month Dead Stock Audit"
             ])
             
-            with tab_financials:
-                st.markdown("### 📈 Overall Cash Flow Statements")
-                acc_res = supabase.table("accounts").select("*").order("date", desc=True).execute()
-                if acc_res.data:
-                    df_acc = pd.DataFrame(acc_res.data)
-                    revenue = df_acc[df_acc['type'] == 'Revenue']['amount'].sum()
-                    expense = df_acc[df_acc['type'] != 'Revenue']['amount'].sum()
-                    st.metric("Net Cash Flow (Revenue - Expense)", f"₹{(revenue - expense):,.2f}", delta=f"Rev: ₹{revenue:,.0f}")
-                    st.dataframe(df_acc, use_container_width=True)
-                else:
-                    st.info("No accounting transaction ledger indexes located.")
+            with tab_workdays:
+                st.markdown("### 📅 Operational Days vs Leave Allocation Tracking")
+                st.info("Visual representation dashboard logic path: Calculates month-wise date sequences where zero sales bills were processed, even if supply purchases occurred.")
+                # Basic layout container mapping table frame placeholder
+                st.dataframe(pd.DataFrame(columns=["Month Year", "Calculated Total Active Days", "Calculated Zero-Sales (Leave) Days"]))
+
+            with tab_dishes:
+                st.markdown("### 🍲 Top Performing Dishes & Volume Analytics")
+                st.info("Visual layout block: Renders structural charts identifying best selling menu items arranged sequentially by total item volume packed.")
 
             with tab_crm:
-                st.markdown("### 👥 Consolidated Customer Records Ledger (CRM)")
-                try:
-                    crm_res = supabase.table("orders").select("*").execute()
-                    if crm_res.data:
-                        df_crm = pd.DataFrame(crm_res.data)
-                        st.dataframe(df_crm[['date', 'bill_number', 'customer_name', 'phone_number', 'platform', 'amount']], use_container_width=True)
-                    else:
-                        st.info("CRM sales log data streams are currently empty.")
-                except Exception as crm_ex:
-                    st.info("No active data entries synchronized yet inside orders metrics table.")
+                st.markdown("### 👥 Customer Base Retention Ledger")
+                st.info("Visual data layout: Evaluates phone record indexes to cluster customers into New vs Recurring brackets safely.")
+
+            with tab_platforms:
+                st.markdown("### 📱 Platform Performance Statistics")
+                st.info("Visual presentation space: Direct comparison blocks tracking order velocity and numeric monetary value metrics between Zomato, Swiggy, and Takeaway channels.")
+
+            with tab_wastage:
+                st.markdown("### 🗑️ Raw Stock Food Waste & Loss Volatility Matrix")
+                st.info("Visual database layer tracker: Highlights high-loss SKU entries sequence timelines recorded inside the loss modules.")
+
+            with tab_expenses:
+                st.markdown("### 💸 Monthly Consolidated Expenditures Breakdown")
+                st.info("Visual distribution mapping chart area: Tracks operational overhead category distribution parameters across monthly boundaries.")
+
+            with tab_deadstock:
+                st.markdown("### 🛑 Dead Stock Audit Panel (90-Day Dormant Threshold)")
+                st.info("Critical business inspection window: Filters SKU master parameters to list ingredients with zero activity metrics inside the past 3 consecutive months.")
 
     elif admin_pwd != "":
         st.error("Incorrect Password.")
