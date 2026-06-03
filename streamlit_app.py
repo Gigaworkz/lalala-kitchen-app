@@ -1,4 +1,4 @@
-import import streamlit as st
+import streamlit as st
 from supabase import create_client
 import datetime
 import pandas as pd
@@ -328,68 +328,65 @@ elif choice == "Admin Login":
                     p_qty = st.number_input(f"Qty ({s_unit})", min_value=0.1, key="p_qty")
                     p_amt = st.number_input("Total Amount Spent", min_value=0.0, key="p_amt")
                 if st.button("Submit Purchase"):
-                    curr_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', p_item).execute() as st
-import datetime
-import pandas as pd
+                    curr_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', p_item).execute()
+                    curr = float(curr_res.data[0]['current_stock'])
+                    supabase.table("sku_master").update({"current_stock": curr + p_qty}).eq('\"Ingerdient Name\"', p_item).execute()
+                    supabase.table("accounts").insert({"date": str(p_date), "type": "Purchase", "category": "Raw Material", "item_name": p_item, "amount": p_amt, "qty": p_qty, "unit": s_unit}).execute()
+                    st.success("Purchase Logged!")
 
-# --- CUSTOM CSS: COLOR PALETTE ---
-st.markdown("""
-<style>
-    /* Button Colors */
-    div.stButton > button[key="btn_add_cart"] { background-color: #FFB74D !important; color: black !important; }
-    div.stButton > button[key="btn_gen_bill"] { background-color: #E1BEE7 !important; color: black !important; }
-    div.stButton > button[key="btn_print"] { background-color: #81D4FA !important; color: black !important; }
-    div.stButton > button[key="btn_whatsapp"] { background-color: #A5D6A7 !important; color: black !important; }
-    div.stButton > button[key="btn_clear"] { background-color: #FFF59D !important; color: black !important; }
-</style>
-""", unsafe_allow_html=True)
+            elif acc_type == "Fixed Expenses":
+                st.markdown("### 💸 Fixed Expense Entry")
+                e_date = st.date_input("Expense Date", datetime.date.today(), key="e_date")
+                e_cat = st.selectbox("Category", ["Rent", "EB Bill", "Salary", "Gas", "Maintenance", "Other"], key="e_cat")
+                e_amt = st.number_input("Amount", min_value=0.0, key="e_amt")
+                if st.button("Save Expense"):
+                    supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt}).execute()
+                    st.success("Expense Recorded!")
 
-# Session States
-if "billing_cart" not in st.session_state: st.session_state.billing_cart = []
-if "show_bill" not in st.session_state: st.session_state.show_bill = False
+            elif acc_type == "Channel Payout Settlements":
+                st.markdown("### 💳 Automated Payout Validation Logic")
+                col1, col2 = st.columns(2)
+                with col1:
+                    s_platform = st.selectbox("Select Platform", ["Zomato", "Swiggy"], key="set_plat")
+                    start_date = st.date_input("From Date", datetime.date.today() - datetime.timedelta(days=7), key="set_start")
+                    end_date = st.date_input("To Date", datetime.date.today(), key="set_end")
+                with col2:
+                    payout_received = st.number_input("Actual Amount Received in Bank (₹)", min_value=0.0, step=100.0, key="set_cash")
+                
+                if st.button("Process & Auto-Calculate Commission"):
+                    gross_sales = 0.0
+                    try:
+                        orders_res = supabase.table("orders").select("*").execute()
+                        if orders_res.data:
+                            df_orders = pd.DataFrame(orders_res.data)
+                            df_orders['date'] = pd.to_datetime(df_orders['date']).dt.date
+                            filtered_df = df_orders[(df_orders['platform'].astype(str).str.lower() == s_platform.lower()) & (df_orders['date'] >= start_date) & (df_orders['date'] <= end_date)]
+                            gross_sales = float(filtered_df['amount'].sum())
+                    except Exception as e:
+                        pass
+                    
+                    if gross_sales == 0: gross_sales = payout_received
+                    commission_deducted = gross_sales - payout_received
+                    if commission_deducted < 0: commission_deducted = 0.0
+                    
+                    supabase.table("accounts").insert({"date": str(datetime.date.today()), "type": "Revenue", "category": f"{s_platform} Payout", "item_name": f"Period: {start_date} to {end_date}", "amount": payout_received, "notes": f"Gross Sales: {gross_sales:.2f}"}).execute()
+                    if commission_deducted > 0:
+                        supabase.table("accounts").insert({"date": str(datetime.date.today()), "type": "Expense", "category": "Platform Commission", "item_name": s_platform, "amount": commission_deducted, "notes": f"Auto cut for period {start_date} to {end_date}"}).execute()
+                    st.success("Successfully Synced!")
 
-# --- HEADER SECTION ---
-col_logo, col_text = st.columns([1, 4])
-with col_logo:
-    st.image("logo.png", width=120) # Path to your logo
-with col_text:
-    st.markdown("<h2 style='margin:0; color:#F5F5F5;'>LALALA</h2>", unsafe_allow_html=True)
-    st.markdown("<h3 style='margin:0; color:#E0E0E0;'>Cloud Kitchen</h3>", unsafe_allow_html=True)
-    st.markdown("<p style='margin:0; color:#BDBDBD; font-style:italic;'>Good Food | Sig-Nature Feel</p>", unsafe_allow_html=True)
-    st.markdown("<p style='margin:0; color:#81C784; font-weight:bold;'>Pure Veg 🥦</p>", unsafe_allow_html=True)
+        # 3. WASTAGE ENTRY
+        elif admin_tab == "Wastage Entry":
+            st.subheader("🗑️ Non-Revenue & Loss Entry")
+            w_category = st.radio("Type of Entry", ["Raw Material Loss", "Cooked Item Waste", "Complimentary / Promo"], horizontal=True)
 
-st.divider()
+        # 4. REPORT ANALYTICS INTERFACE HUB
+        elif admin_tab == "Report Analytics":
+            st.subheader("📊 Centralized Business Intelligence Dashboard")
+            st.error("⚠️ **Proactive Critical Notice: Low Stock Alert Engine Active**")
+            tab_workdays, tab_dishes, tab_crm, tab_platforms, tab_wastage, tab_expenses, tab_deadstock = st.tabs([
+                "📅 Working Days Tracker", "🍲 Dish Performance Matrix", "👥 Customer Retention (CRM)",
+                "📱 Platform Individual Sales", "🗑️ Food Waste SKU Analysis", "💸 Monthly Expenses Breakdown", "🛑 3-Month Dead Stock Audit"
+            ])
 
-# --- BILLING UI ---
-col_1, col_2 = st.columns([1, 1])
-with col_1:
-    st.subheader("Billing Section")
-    # Date logic: Default current date
-    bill_date = st.date_input("Billing Date", datetime.date.today())
-    
-    # Adding items
-    dish = st.selectbox("Select Dish", ["Veg Biryani", "Paneer Tikka", "Gobi 65"])
-    if st.button("Add to Cart", key="btn_add_cart"):
-        st.session_state.billing_cart.append({"dish": dish, "qty": 1, "price": 100})
-        st.session_state.show_bill = False
-        st.rerun()
-
-with col_2:
-    st.subheader("Order Summary")
-    if st.session_state.billing_cart:
-        df = pd.DataFrame(st.session_state.billing_cart)
-        st.table(df)
-        
-        # Lavender Generate Bill Button (Placed above Total)
-        if st.button("Generate Bill", key="btn_gen_bill"):
-            st.session_state.show_bill = True
-            
-        if st.session_state.show_bill:
-            total = df['price'].sum()
-            st.markdown(f"### Total: ₹{total}")
-            
-            # Action Buttons
-            c1, c2, c3 = st.columns(3)
-            with c1: st.button("Print", key="btn_print")
-            with c2: st.button("WhatsApp", key="btn_whatsapp")
-            with c3: st.button("Clear", key="btn_clear")
+    elif admin_pwd != "":
+        st.error("Incorrect Password.")
