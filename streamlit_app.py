@@ -30,12 +30,12 @@ if "bill_number_counter" not in st.session_state:
             if ext_numbers:
                 st.session_state.bill_number_counter = max(ext_numbers) + 1
             else:
-                st.session_state.bill_number_counter = 001
+                st.session_state.bill_number_counter = 1 # Start at index 1 standard integer integer boundaries matrix
         else:
-            st.session_state.bill_number_counter = 001
+            st.session_state.bill_number_counter = 1
     except Exception as ec:
         st.sidebar.warning(f"Counter Sync Delay Note: {str(ec)}")
-        st.session_state.bill_number_counter = 001
+        st.session_state.bill_number_counter = 1
 
 if "billing_cart" not in st.session_state:
     st.session_state.billing_cart = []
@@ -57,7 +57,8 @@ if choice == "Billing":
     if 'last_bill_data' not in st.session_state:
         st.session_state.last_bill_data = None
 
-    current_bill_id = f"LALALA-2026-{st.session_state.bill_number_counter}"
+    # {:03d} logic automatically formats numerical integer values like 1 into string '001', 2 into '002', 12 into '012', 105 into '105' parameters cleanly
+    current_bill_id = f"LALALA-2026-{st.session_state.bill_number_counter:03d}"
     st.write(f"**Current Bill Number:** `{current_bill_id}`")
     st.markdown("---")
     
