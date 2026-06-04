@@ -272,64 +272,76 @@ elif choice == "Admin Login":
             # 3. NEW: PENDING CREDIT CUSTOMER DASHBOARD & NOTIFICATION HUB
             # ==========================================
             elif acc_type == "Pending Credit Dashboard 🔔":
-                st.markdown("### 👥 Client Credit Line Monitoring Hub")
+                st.markdown("### 👥 Direct & Party Client Credit Line Monitoring Hub")
                 try:
-                    # Scan total credit accumulation from orders
+                    # 1. SCAN ORDERS AND EXCLUDE AGGREGATORS DIRECTLY FROM CLOUD ENGINE PIPELINE
+                    # Filter out Swiggy and Zomato names directly from mapping loops
                     credit_res = supabase.table("orders").select("*").eq("payment_mode", "Credit").execute()
+                    
                     if credit_res.data:
                         df_credit_orders = pd.DataFrame(credit_res.data)
-                        df_cust_credit = df_credit_orders.groupby(['customer_name', 'phone_number'])['amount'].sum().reset_index()
-                        df_cust_credit.columns = ["Client Name", "Contact Token", "Total Credit Accumulated (₹)"]
                         
-                        # Scan credit recovery parameters from accounts
-                        recovery_res = supabase.table("accounts").select("*").eq("category", "Credit Recovery").execute()
-                        recovery_dict = {}
-                        if recovery_res.data:
-                            for rec_row in recovery_res.data:
-                                phone_tag = rec_row.get("notes", "").replace("Phone Recovery: ", "").strip()
-                                recovery_dict[phone_tag] = recovery_dict.get(phone_tag, 0.0) + float(rec_row.get("amount", 0))
+                        # CRITICAL FIX FILTER: Dropping aggregator profiles safely from Client Ledger View
+                        if 'platform' in df_credit_orders.columns:
+                            df_credit_orders = df_credit_orders[~df_credit_orders['platform'].isin(['Swiggy', 'Zomato'])]
+                        if 'customer_name' in df_credit_orders.columns:
+                            df_credit_orders = df_credit_orders[~df_credit_orders['customer_name'].isin(['Swiggy', 'Zomato'])]
                         
-                        verified_credit_list = []
-                        for _, row in df_cust_credit.iterrows():
-                            ph = str(row["Contact Token"])
-                            total_sales_debited = float(row["Total Credit Accumulated (₹)"])
-                            total_recovered = float(recovery_dict.get(ph, 0.0))
-                            net_outstanding = total_sales_debited - total_recovered
+                        if not df_credit_orders.empty:
+                            df_cust_credit = df_credit_orders.groupby(['customer_name', 'phone_number'])['amount'].sum().reset_index()
+                            df_cust_credit.columns = ["Client Name", "Contact Token", "Total Credit Accumulated (₹)"]
                             
-                            if net_outstanding > 0:
-                                verified_credit_list.append({
-                                    "Customer Name": row["Client Name"], "Phone Number": ph,
-                                    "Total Bill Credit (₹)": total_sales_debited, "Total Cleared (₹)": total_recovered,
-                                    "Net Outstanding Due (₹)": net_outstanding
-                                })
-                        
-                        if verified_credit_list:
-                            df_final_dues = pd.DataFrame(verified_credit_list)
+                            # Scan credit recovery parameters from accounts
+                            recovery_res = supabase.table("accounts").select("*").eq("category", "Credit Recovery").execute()
+                            recovery_dict = {}
+                            if recovery_res.data:
+                                for rec_row in recovery_res.data:
+                                    phone_tag = rec_row.get("notes", "").replace("Phone Recovery: ", "").strip()
+                                    recovery_dict[phone_tag] = recovery_dict.get(phone_tag, 0.0) + float(rec_row.get("amount", 0))
                             
-                            # DYNAMIC NOTIFICATION RISK BANNER
-                            st.error(f"⚠️ **Pending Payments Notification:** {len(df_final_dues)} custom client profiles are active! Total risk valuation: ₹{df_final_dues['Net Outstanding Due (₹)'].sum():,.2f}")
-                            st.dataframe(df_final_dues, use_container_width=True)
-                            
-                            st.markdown("#### 📥 Log Client Credit Recovery Entry")
-                            rec_col1, rec_col2 = st.columns(2)
-                            with rec_col1:
-                                r_date = st.date_input("Recovery Date", datetime.date.today(), key="rec_cl_dt")
-                                target_client = st.selectbox("Select Active Debtor", [f"{r['Customer Name']} ({r['Phone Number']})" for r in verified_credit_list], key="rec_cl_sl")
-                            with rec_col2:
-                                r_amount = st.number_input("Amount Recovered (₹)", min_value=0.0, step=50.0, key="rec_cl_am")
+                            verified_credit_list = []
+                            for _, row in df_cust_credit.iterrows():
+                                ph = str(row["Contact Token"])
+                                total_sales_debited = float(row["Total Credit Accumulated (₹)"])
+                                total_recovered = float(recovery_dict.get(ph, 0.0))
+                                net_outstanding = total_sales_debited - total_recovered
                                 
-                            if st.button("📡 Process Recovery Reduction Line"):
-                                if r_amount > 0:
-                                    ext_phone = target_client.split("(")[-1].replace(")", "").strip()
-                                    ext_name = target_client.split(" (")[0].strip()
-                                    supabase.table("accounts").insert({
-                                        "date": str(r_date), "type": "Income", "category": "Credit Recovery",
-                                        "item_name": f"Credit Recovery from {ext_name}", "qty": 1, "amount": float(r_amount), "notes": f"Phone Recovery: {ext_phone}"
-                                    }).execute()
-                                    st.success(f"✅ Recovered ₹{r_amount} from {ext_name}.")
-                                    st.rerun()
+                                if net_outstanding > 0:
+                                    verified_credit_list.append({
+                                        "Customer Name": row["Client Name"], "Phone Number": ph,
+                                        "Total Bill Credit (₹)": total_sales_debited, "Total Cleared (₹)": total_recovered,
+                                        "Net Outstanding Due (₹)": net_outstanding
+                                    })
+                            
+                            if verified_credit_list:
+                                df_final_dues = pd.DataFrame(verified_credit_list)
+                                
+                                # DYNAMIC DIRECT CREDIT RISK BANNER (Aggregators safely filtered out)
+                                st.error(f"⚠️ **Direct Pending Credit Notification:** {len(df_final_dues)} custom party/client profiles are active! Net local collection outstanding: ₹{df_final_dues['Net Outstanding Due (₹)'].sum():,.2f}")
+                                st.dataframe(df_final_dues, use_container_width=True)
+                                
+                                st.markdown("#### 📥 Log Client Credit Recovery Entry")
+                                rec_col1, rec_col2 = st.columns(2)
+                                with rec_col1:
+                                    r_date = st.date_input("Recovery Date", datetime.date.today(), key="rec_cl_dt")
+                                    target_client = st.selectbox("Select Active Debtor", [f"{r['Customer Name']} ({r['Phone Number']})" for r in verified_credit_list], key="rec_cl_sl")
+                                with rec_col2:
+                                    r_amount = st.number_input("Amount Recovered (₹)", min_value=0.0, step=50.0, key="rec_cl_am")
+                                    
+                                if st.button("📡 Process Recovery Reduction Line"):
+                                    if r_amount > 0:
+                                        ext_phone = target_client.split("(")[-1].replace(")", "").strip()
+                                        ext_name = target_client.split(" (")[0].strip()
+                                        supabase.table("accounts").insert({
+                                            "date": str(r_date), "type": "Income", "category": "Credit Recovery",
+                                            "item_name": f"Credit Recovery from {ext_name}", "qty": 1, "amount": float(r_amount), "notes": f"Phone Recovery: {ext_phone}"
+                                        }).execute()
+                                        st.success(f"✅ Recovered ₹{r_amount} from {ext_name}.")
+                                        st.rerun()
+                            else:
+                                st.success("🎉 All external customer credit profiles cleared safely!")
                         else:
-                            st.success("🎉 All external customer credit profiles cleared safely!")
+                            st.info("Zero direct client credit terms logged after excluding platform aggregators.")
                     else:
                         st.info("Zero credit payment orders logged inside central database system.")
                 except Exception as ex_cr:
