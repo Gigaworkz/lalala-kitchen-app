@@ -28,7 +28,7 @@ choice = st.sidebar.radio("Go to", ["Billing", "Admin Login"])
 # --- MODULE 1: BILLING (HIGH-SPEED COUNTER WITH CUSTOM OPERATIONS) ---
 # ==========================================
 if choice == "Billing":
-    st.subheader("🛒 High-Speed Billing Counter")
+    st.subheader("🛒 Billing Counter")
     current_bill_id = f"LALALA-2026-{st.session_state.bill_number_counter}"
     st.write(f"**Current Bill Number:** `{current_bill_id}`")
     st.markdown("---")
@@ -71,7 +71,7 @@ if choice == "Billing":
             comm_pct = 33.77 if channel == "Swiggy" else (34.90 if channel == "Zomato" else 0.0)
             final_comm = st.number_input("Commission %", value=comm_pct)
 
-        if st.button("➕ Append Item to Bill", use_container_width=True):
+        if st.button("➕ Add to Cart", use_container_width=True):
             existing_item = next((item for item in st.session_state.billing_cart if item['dish'] == selected_dish), None)
             if existing_item:
                 existing_item['qty'] += qty
@@ -155,7 +155,7 @@ if choice == "Billing":
                     st.rerun()
             
             st.markdown("---")
-            if st.button("🏁 Finalize Bill & Sync Inventory Stock", type="primary", use_container_width=True):
+            if st.button("🏁 Generate Bill", type="primary", use_container_width=True):
                 with st.spinner("Processing transaction matrices and decrementing stock..."):
                     try:
                         supabase.table("orders").insert({
