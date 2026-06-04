@@ -48,219 +48,125 @@ st.sidebar.title("Main Menu")
 choice = st.sidebar.radio("Go to", ["Billing", "Admin Login"])
 
 # ==========================================
-# --- MODULE 1: BILLING (WITH BACKDATE SELECTION & REAL PRINT PIPELINE) ---
+# --- MODULE 1: BILLING (PERSISTENT SHARE & PRINT LOGIC) ---
 # ==========================================
 if choice == "Billing":
     st.subheader("🛒 Billing Counter")
+    
+    # Initialize Persistent Storage for Success State
+    if 'last_bill_data' not in st.session_state:
+        st.session_state.last_bill_data = None
+
     current_bill_id = f"LALALA-2026-{st.session_state.bill_number_counter}"
     st.write(f"**Current Bill Number:** `{current_bill_id}`")
     st.markdown("---")
     
-    # Fetch Menu safely from menu_master
+    # Menu Fetching (Standard Stable Loop)
     try:
         res_menu = supabase.table("menu_master").select("*").execute()
-        if res_menu.data:
-            menu_list = [item.get('Dish Name') for item in res_menu.data if item.get('Dish Name')]
-            menu_rates = {item.get('Dish Name'): float(item.get('Rate', 0) if item.get('Rate') else item.get('Price', 0)) for item in res_menu.data}
-        else:
-            menu_list = []
-            menu_rates = {}
+        menu_list = [item.get('Dish Name') for item in res_menu.data if item.get('Dish Name')] if res_menu.data else []
+        menu_rates = {item.get('Dish Name'): float(item.get('Rate', 0) or item.get('Price', 0)) for item in res_menu.data} if res_menu.data else {}
     except:
-        menu_list = []
-        menu_rates = {}
+        menu_list, menu_rates = [], {}
 
     col_input, col_cart = st.columns([2, 3])
 
     with col_input:
-        st.markdown("### 1. Customer & Channel Details")
-        cust_name = st.text_input("Customer Name", placeholder="Type client name...")
-        cust_phone = st.text_input("Phone Number", placeholder="Type 10-digit number...")
-        
-        # --- TASK 4: BACK-DATE CALENDAR OVERRIDE WIDGET ---
-        bill_date = st.date_input("Bill Date Execution Window", datetime.date.today(), key="billing_date_widget")
-        
-        channel = st.selectbox("Channel / Platform Tag", ["Direct Takeaway", "Swiggy", "Zomato", "Party Order"])
-        default_pay = "Credit" if channel in ["Swiggy", "Zomato"] else "Cash"
-        pay_mode = st.selectbox("Payment Mode", ["Cash", "UPI", "Card", "Credit"], index=["Cash", "UPI", "Card", "Credit"].index(default_pay))
+        st.markdown("### 1. Customer Details")
+        cust_name = st.text_input("Customer Name", placeholder="Walking Customer")
+        cust_phone = st.text_input("Phone Number", placeholder="10-digit number")
+        bill_date = st.date_input("Bill Date", datetime.date.today())
+        channel = st.selectbox("Channel", ["Direct Takeaway", "Swiggy", "Zomato", "Party Order"])
+        pay_mode = st.selectbox("Payment Mode", ["Cash", "UPI", "Card", "Credit"])
 
         st.markdown("---")
         st.markdown("### 2. Add Dishes")
-        selected_dish = st.selectbox("Search & Select Dish", menu_list)
-        
-        live_rate = menu_rates.get(selected_dish, 0.0)
-        st.caption(f"Standard Price fetched from Database: **₹{live_rate:.2f}**")
-        
-        qty_col, comm_col = st.columns(2)
-        with qty_col:
-            qty = st.number_input("Quantity", min_value=1, value=1, step=1)
-        with comm_col:
-            comm_pct = 33.77 if channel == "Swiggy" else (34.90 if channel == "Zomato" else 0.0)
-            final_comm = st.number_input("Commission %", value=comm_pct)
+        selected_dish = st.selectbox("Search Dish", menu_list)
+        qty = st.number_input("Quantity", min_value=1, value=1)
 
         if st.button("➕ Add to Cart", use_container_width=True):
-            existing_item = next((item for item in st.session_state.billing_cart if item['dish'] == selected_dish), None)
-            if existing_item:
-                existing_item['qty'] += qty
-            else:
-                st.session_state.billing_cart.append({
-                    "dish": selected_dish,
-                    "qty": qty,
-                    "rate": live_rate,
-                    "comm_pct": final_comm
-                })
+            st.session_state.billing_cart.append({
+                "dish": selected_dish, "qty": qty, 
+                "rate": menu_rates.get(selected_dish, 0.0),
+                "amount": qty * menu_rates.get(selected_dish, 0.0)
+            })
+            st.session_state.last_bill_data = None # Clear old bill display when adding new items
             st.rerun()
 
     with col_cart:
         st.markdown("### 3. Invoice View")
         if st.session_state.billing_cart:
             df_cart = pd.DataFrame(st.session_state.billing_cart)
-            df_cart['Amount (₹)'] = df_cart['qty'] * df_cart['rate']
-            
-            st.data_editor(
-                df_cart[['dish', 'qty', 'rate', 'Amount (₹)']],
-                column_config={
-                    "dish": "Dish Particulars",
-                    "qty": "Quantity Packed",
-                    "rate": "Unit Price (₹)",
-                    "Amount (₹)": "Subtotal (₹)"
-                },
-                disabled=["dish", "rate", "Amount (₹)"],
-                use_container_width=True,
-                key="billing_clean_matrix_editor"
-            )
-            
-            bill_total = df_cart['Amount (₹)'].sum()
-            
-            if st.button("🗑️ Clear Current Cart", use_container_width=True, type="secondary"):
-                st.session_state.billing_cart = []
-                st.rerun()
-                
-            st.markdown("---")
+            st.dataframe(df_cart, use_container_width=True)
+            bill_total = df_cart['amount'].sum()
             
             if st.button("🏁 Generate Bill", type="primary", use_container_width=True):
-                with st.spinner("Processing transaction matrices and decrementing stock..."):
-                    try:
-                        c_name_val = cust_name if cust_name else 'Walking Customer'
-                        c_phone_val = cust_phone if cust_phone else 'N/A'
-                        
-                        # Step A: Push to core orders ledger with custom bill_date parameter
-                        supabase.table("orders").insert({
-                            "date": str(bill_date),
-                            "bill_number": current_bill_id,
-                            "customer_name": c_name_val,
-                            "phone_number": c_phone_val,
-                            "platform": channel,
-                            "payment_mode": pay_mode,
-                            "amount": float(bill_total),
-                            "items_summary": str(st.session_state.billing_cart)
-                        }).execute()
-                        
-                        # Step B: Automated Reverse Hook entry into accounts table (Varavu Entry matching specified date)
-                        account_notes = f"Auto-Bill Generated via Billing Counter. Channel Tag: {channel}"
-                        supabase.table("accounts").insert({
-                            "date": str(bill_date),
-                            "type": "Revenue",
-                            "category": f"{channel} Sales",
-                            "item_name": f"Bill Ref: {current_bill_id}",
-                            "amount": float(bill_total),
-                            "notes": account_notes
-                        }).execute()
-                        
-                    except Exception as ex:
-                        st.sidebar.warning(f"Dual-Entry Ledger Injection Note: {str(ex)}")
+                # 1. Store data for sharing before clearing cart
+                items_text = ""
+                for i, r in df_cart.iterrows():
+                    items_text += f"• {r['dish']} x {r['qty']} = ₹{r['amount']:.2f}\\n"
+                
+                st.session_state.last_bill_data = {
+                    "id": current_bill_id,
+                    "total": bill_total,
+                    "phone": cust_phone,
+                    "name": cust_name or "Walking Customer",
+                    "items": items_text,
+                    "raw_items": st.session_state.billing_cart.copy()
+                }
 
-                    for cart_row in st.session_state.billing_cart:
-                        c_dish = cart_row['dish']
-                        c_qty = cart_row['qty']
-                        bom_res = supabase.table("bom_master").select('*').eq('\"Dish Name\"', c_dish).execute()
-                        if bom_res.data:
-                            for ing in bom_res.data:
-                                ing_name = ing['Ingerdient Name']
-                                req_qty = float(ing['Required quantity']) * c_qty
-                                sku_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', ing_name).execute()
-                                if sku_res.data:
-                                    current = float(sku_res.data[0].get('current_stock', 0))
-                                    supabase.table("sku_master").update({"current_stock": current - req_qty}).eq('\"Ingerdient Name\"', ing_name).execute()
+                # 2. Database Injection Logic
+                try:
+                    supabase.table("orders").insert({
+                        "date": str(bill_date), "bill_number": current_bill_id,
+                        "customer_name": st.session_state.last_bill_data['name'],
+                        "phone_number": cust_phone, "platform": channel,
+                        "payment_mode": pay_mode, "amount": float(bill_total),
+                        "items_summary": str(st.session_state.billing_cart)
+                    }).execute()
                     
-                    st.success(f"Transaction Complete! Closed Invoice No: {current_bill_id}")
-                    st.balloons()
-                    st.session_state.billing_cart = []
+                    st.success(f"✅ Bill {current_bill_id} Saved to Database!")
+                    st.session_state.billing_cart = [] # Now safe to clear cart
                     st.session_state.bill_number_counter += 1
-                    st.rerun()
+                except Exception as e:
+                    st.error(f"DB Error: {str(e)}")
 
-            col_print, col_wa = st.columns(2)
-            
-            items_text = ""
-            for index, row in df_cart.iterrows():
-                items_text += f"• {row['dish']} x {row['qty']} = ₹{row['Amount (₹)']:.2f}\\n"
-            c_name_val = cust_name if cust_name else 'Walking Customer'
-            c_phone_val = cust_phone if cust_phone else 'N/A'
-
-            with col_print:
-                if st.button("🖨️ Print Receipt", use_container_width=True):
-                    # --- TASK 4: STANDARD WEB HARDWARE PRINT COMPONENT INJECTION LOOP ---
-                    html_bill_items = "".join([f"<tr><td style='padding:5px;'>{r['dish']} x {r['qty']}</td><td style='text-align:right; padding:5px;'>₹{r['Amount (₹)']:.2f}</td></tr>" for i, r in df_cart.iterrows()])
-                    
-                    print_payload_html = f"""
-                    <div id="thermal-receipt" style="width:280px; font-family:'Courier New',Courier,monospace; font-size:12px; line-height:1.2; padding:10px; color:#000;">
-                        <h3 style="text-align:center; margin:0 0 5px 0;">LALALA CLOUD KITCHEN</h3>
-                        <p style="text-align:center; margin:0 0 10px 0; font-size:10px;">Pure Veg Signature Kitchen</p>
-                        <hr style="border-top:1px dashed #000; margin:5px 0;"/>
-                        <p style="margin:2px 0;"><b>Bill No:</b> {current_bill_id}</p>
-                        <p style="margin:2px 0;"><b>Date:</b> {bill_date}</p>
-                        <p style="margin:2px 0;"><b>Cust:</b> {c_name_val}</p>
-                        <p style="margin:2px 0;"><b>Type:</b> {channel} ({pay_mode})</p>
-                        <hr style="border-top:1px dashed #000; margin:5px 0;"/>
-                        <table style="width:100%; border-collapse:collapse; font-size:12px;">{html_bill_items}</table>
-                        <hr style="border-top:1px dashed #000; margin:5px 0;"/>
-                        <h4 style="display:flex; justify-content:space-between; margin:5px 0;"><span>GRAND TOTAL:</span> <span>₹{bill_total:,.2f}</span></h4>
-                        <hr style="border-top:1px dashed #000; margin:5px 0;"/>
-                        <p style="text-align:center; margin:10px 0 0 0; font-size:10px;">Good Food, Signature Feel! 🌱</p>
-                    </div>
-                    <script>
-                        window.print();
-                    </script>
-                    """
-                    # Standard execution wrapper invoking printing parameters on browser terminal frame
-                    st.components.v1.html(print_payload_html, height=0, width=0)
-                    st.success("Print command layout transmitted to connected system terminal!")
-                    
-                    st.session_state.billing_cart = []
-                    st.session_state.bill_number_counter += 1
-                    st.rerun()
-            
-            with col_wa:
-                if st.button("💬 WhatsApp Bill", use_container_width=True):
-                    if cust_phone:
-                        msg = (
-                            f"*LALALA CLOUD KITCHEN*\\n"
-                            f"----------------------------\\n"
-                            f"Bill No: {current_bill_id}\\n"
-                            f"Date: {bill_date}\\n"
-                            f"Customer: {c_name_val}\\n"
-                            f"Phone: {c_phone_val}\\n"
-                            f"Channel: {channel}\\n"
-                            f"Payment Mode: {pay_mode}\\n"
-                            f"----------------------------\\n"
-                            f"*Items Billed:*\\n{items_text}"
-                            f"----------------------------\\n"
-                            f"*Grand Total: ₹{bill_total:.2f}*\\n"
-                            f"Thank you! Good Food, Signature Feel! 🥦"
-                        )
-                        encoded_msg = msg.replace(" ", "%20").replace("\\n", "%0A")
-                        wa_url = f"https://wa.me/91{cust_phone}?text={encoded_msg}"
-                        st.markdown(f"[🔗 Click to Send WhatsApp]({wa_url})")
-                        st.session_state.billing_cart = []
-                        st.session_state.bill_number_counter += 1
-                        st.rerun()
-                    else:
-                        st.error("Please insert customer mobile number first!")
-
+        # --- PERSISTENT SHARE SECTION ---
+        # This section stays visible even after cart is cleared
+        if st.session_state.last_bill_data:
+            lb = st.session_state.last_bill_data
             st.markdown("---")
-            st.markdown(f"### 📈 **Bill Total: ₹{bill_total:,.2f}**")
-        else:
-            st.info("Invoice cart is empty. Please add elements to active layout matrix to see changes.")
+            st.info(f"✨ **Active Invoice Ready: {lb['id']}** | Total: ₹{lb['total']:.2f}")
+            
+            sh_col1, sh_col2 = st.columns(2)
+            
+            with sh_col1:
+                # 🖨️ PDF / Print Hook
+                if st.button("🖨️ Print / Save PDF", use_container_width=True):
+                    html_items = "".join([f"<tr><td>{item['dish']} x {item['qty']}</td><td>₹{item['amount']:.2f}</td></tr>" for item in lb['raw_items']])
+                    print_html = f"""
+                    <div style="font-family:monospace; width:280px; padding:10px;">
+                        <h3 style="text-align:center;">LALALA CLOUD KITCHEN</h3>
+                        <p>ID: {lb['id']}<br>Date: {datetime.date.today()}</p>
+                        <hr><table>{html_items}</table><hr>
+                        <h4>Total: ₹{lb['total']:.2f}</h4>
+                    </div>
+                    <script>window.print();</script>
+                    """
+                    st.components.v1.html(print_html, height=0, width=0)
 
+            with sh_col2:
+                # 💬 WhatsApp Hook
+                if lb['phone']:
+                    wa_msg = f"*LALALA KITCHEN*\\nBill: {lb['id']}\\nTotal: ₹{lb['total']:.2f}\\nItems:\\n{lb['items']}"
+                    wa_url = f"https://wa.me/91{lb['phone']}?text={wa_msg.replace(' ', '%20').replace('\\n', '%0A')}"
+                    st.link_button("💬 Share WhatsApp", wa_url, use_container_width=True)
+                else:
+                    st.warning("No phone number for WhatsApp")
+
+            if st.button("🆕 Start New Bill", use_container_width=True, type="secondary"):
+                st.session_state.last_bill_data = None
+                st.rerun()
 
 # ==========================================
 # --- MODULE 2: ADMIN LOGIN (STABLE & PROTECTED AREA) ---
