@@ -87,11 +87,24 @@ if choice == "Billing":
     with col_cart:
         st.markdown("### 3. Invoice View")
         if st.session_state.billing_cart:
+            # --- START OF REPLACEMENT (EDIT 2) ---
             df_cart = pd.DataFrame(st.session_state.billing_cart)
             df_cart['Amount (₹)'] = df_cart['qty'] * df_cart['rate']
             
+            # Data Editor Matrix (Bracket properly closed here)
             st.data_editor(
-                # --- NEW REALIGNED LAYOUT SEQUENCE (EDIT 2) ---
+                df_cart[['dish', 'qty', 'rate', 'Amount (₹)']],
+                column_config={
+                    "dish": "Dish Particulars",
+                    "qty": "Quantity Packed",
+                    "rate": "Unit Price (₹)",
+                    "Amount (₹)": "Subtotal (₹)"
+                },
+                disabled=["dish", "rate", "Amount (₹)"],
+                use_container_width=True,
+                key="billing_clean_matrix_editor"
+            )
+            
             bill_total = df_cart['Amount (₹)'].sum()
             
             # 1. Clear Current Cart Button (Munnadiye varum)
@@ -184,6 +197,7 @@ if choice == "Billing":
             st.markdown("---")
             # 4. Final Row: Bill Total Matrix Output Display
             st.markdown(f"### 📈 **Bill Total: ₹{bill_total:,.2f}**")
+            # --- END OF REPLACEMENT ---
         else:
             st.info("Invoice cart is empty. Please add elements to active layout matrix to see changes.")
 
