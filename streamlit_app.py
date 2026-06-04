@@ -426,9 +426,58 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(c_date), "type": "Expense", "category": "Marketing", "item_name": c_item, "qty": c_qty, "amount": c_cost, "notes": "Promo Offer Allocation"}).execute()
                     st.success(f"Promo entry of ₹{c_cost} added safely for {c_item}.")
 
-        # 4. REPORT ANALYTICS (Alagu Panna Vendiya New Interface Hub Layout)
+        # 4. REPORT ANALYTICS & PAST BILL SEARCH ENGINE (TASK 3 MERGED)
         elif admin_tab == "Report Analytics":
             st.subheader("📊 Centralized Business Intelligence Dashboard")
+            
+            # --- TASK 3: PAST BILL LOOKUP INTERFACE HOOK ---
+            st.markdown("### 🔍 Central Invoice Retrieval Engine")
+            st.info("Type complete text token identifiers (e.g., LALALA-2026-1001) or customer parameters to scan repository logs.")
+            
+            search_col1, search_col2 = st.columns([3, 1])
+            with search_col1:
+                search_query = st.text_input("Enter Bill Number or Phone Number Token Key", placeholder="LALALA-2026-", key="central_search_input")
+            with search_col2:
+                st.write("##") # Layout alignment padding
+                search_trigger = st.button("📡 Execute Database Scan", use_container_width=True, type="primary", key="central_search_btn")
+                
+            if search_trigger and search_query:
+                with st.spinner("Executing relational filter scans across cloud server databases..."):
+                    try:
+                        # Query checking both Bill Number and Phone parameters systematically
+                        if search_query.strip().startswith("LALALA"):
+                            fetch_res = supabase.table("orders").select("*").eq("bill_number", search_query.strip()).execute()
+                        else:
+                            fetch_res = supabase.table("orders").select("*").eq("phone_number", search_query.strip()).execute()
+                            
+                        if fetch_res.data:
+                            for matched_bill in fetch_res.data:
+                                st.markdown("---")
+                                st.success(f"Record Matching Verified! Target Invoice Document: **{matched_bill['bill_number']}**")
+                                
+                                # Layout Frame Visual Matrix Creation
+                                v_col1, v_col2 = st.columns(2)
+                                with v_col1:
+                                    st.write(f"📅 **Transaction Date:** {matched_bill.get('date', 'N/A')}")
+                                    st.write(f"👤 **Customer Particulars:** {matched_bill.get('customer_name', 'Walking Customer')}")
+                                    st.write(f"📱 **Contact Registry:** {matched_bill.get('phone_number', 'N/A')}")
+                                with v_col2:
+                                    st.write(f"🌐 **Channel Tag:** {matched_bill.get('platform', 'Counter')}")
+                                    st.write(f"💳 **Settlement Mode:** {matched_bill.get('payment_mode', 'Cash')}")
+                                    st.write(f"💰 **Gross Amount Total:** ₹{float(matched_bill.get('amount', 0)):,.2f}")
+                                    
+                                # Items loop string conversion representation inside a preview box
+                                st.markdown("**Billed Element Details Checklist:**")
+                                st.code(matched_bill.get('items_summary', '[]'), language='json')
+                                
+                                # Print re-trigger activation module placeholder link mapping
+                                st.button(f"🖨️ Re-Send Document to Printer ({matched_bill['bill_number']})", key=f"reprint_{matched_bill['bill_number']}")
+                        else:
+                            st.warning("Query Trace Completed. Absolute zero records discovered matching specifications inside Supabase.")
+                    except Exception as e_fetch:
+                        st.error(f"Search Execution Fault: {str(e_fetch)}")
+
+            st.markdown("---")
             
             # 🚨 Global Safety Header: Low Stock Alert Indicator
             st.error("⚠️ **Proactive Critical Notice: Low Stock Alert Engine Active**")
@@ -449,7 +498,6 @@ elif choice == "Admin Login":
             with tab_workdays:
                 st.markdown("### 📅 Operational Days vs Leave Allocation Tracking")
                 st.info("Visual representation dashboard logic path: Calculates month-wise date sequences where zero sales bills were processed, even if supply purchases occurred.")
-                # Basic layout container mapping table frame placeholder
                 st.dataframe(pd.DataFrame(columns=["Month Year", "Calculated Total Active Days", "Calculated Zero-Sales (Leave) Days"]))
 
             with tab_dishes:
@@ -475,6 +523,5 @@ elif choice == "Admin Login":
             with tab_deadstock:
                 st.markdown("### 🛑 Dead Stock Audit Panel (90-Day Dormant Threshold)")
                 st.info("Critical business inspection window: Filters SKU master parameters to list ingredients with zero activity metrics inside the past 3 consecutive months.")
-
     elif admin_pwd != "":
         st.error("Incorrect Password.")
