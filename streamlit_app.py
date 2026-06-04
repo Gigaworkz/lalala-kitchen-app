@@ -10,12 +10,35 @@ supabase = create_client(url, key)
 
 st.set_page_config(page_title="Sig-nature Kitchen", layout="wide")
 
-# Initialize Session States for Multi-Item Billing Cart & Bill Numbers
+# --- TASK 1: DYNAMIC DB COUNTER INITIALIZATION ENGINE ---
+if "bill_number_counter" not in st.session_state:
+    try:
+        # DB orders table-la irundhu absolute last counter trace query fetch panrom
+        res_counter = supabase.table("orders").select("bill_number").execute()
+        if res_counter.data:
+            # LALALA-2026-XXXX format-la irundhu numeric tail parameter extraction strings parsing
+            ext_numbers = []
+            for row in res_counter.data:
+                b_num = row.get("bill_number", "")
+                if b_num and "-" in b_num:
+                    try:
+                        parts = b_num.split("-")
+                        num_part = int(parts[-1]) # Extracting last numeric sequence
+                        ext_numbers.append(num_part)
+                    except:
+                        pass
+            if ext_numbers:
+                st.session_state.bill_number_counter = max(ext_numbers) + 1
+            else:
+                st.session_state.bill_number_counter = 1001
+        else:
+            st.session_state.bill_number_counter = 1001
+    except Exception as ec:
+        st.sidebar.warning(f"Counter Sync Delay Note: {str(ec)}")
+        st.session_state.bill_number_counter = 1001
+
 if "billing_cart" not in st.session_state:
     st.session_state.billing_cart = []
-if "bill_number_counter" not in st.session_state:
-    st.session_state.bill_number_counter = 1001
-
 # --- UI HEADER ---
 st.markdown('<h1 style="text-align: center; color: #1B5E20;">👨‍🍳 LALALA CLOUD KITCHEN 👨‍🍳</h1>', unsafe_allow_html=True)
 st.markdown('<p style="text-align: center; color: #388E3C; font-size: 20px;">🍟🍔🥟Good Food 🌯🥙🥪| 🌾Sig-Nature Feel 🧀| 🟩 Pure VEG 🌱</p>', unsafe_allow_html=True)
