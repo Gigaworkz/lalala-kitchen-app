@@ -224,8 +224,18 @@ elif choice == "Admin Login":
         # 2. ACCOUNTS ENTRY PANEL
         elif admin_tab == "Accounts Entry Panel":
             st.subheader("💰 Accounts Management & Entries")
-            acc_type = st.radio("Select Action", ["Purchase Entry", "Fixed Expenses", "Channel Payout Settlements"], horizontal=True)
             
+            # --- EXTENDED NAVIGATION CONTROLS ---
+            acc_type = st.radio(
+                "Select Action", 
+                ["Purchase Entry", "Fixed Expenses", "Pending Credit Dashboard 🔔", "Channel Payout Settlements"], 
+                horizontal=True
+            )
+            st.markdown("---")
+            
+            # ==========================================
+            # 1. PURCHASE ENTRY MODULE
+            # ==========================================
             if acc_type == "Purchase Entry":
                 st.markdown("### 🛒 Raw Material Purchase")
                 p_item_res = supabase.table("sku_master").select('\"Ingerdient Name\"', '\"Purchase unit\"').execute()
@@ -246,6 +256,9 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(p_date), "type": "Purchase", "category": "Raw Material", "item_name": p_item, "amount": p_amt, "qty": p_qty, "unit": s_unit}).execute()
                     st.success("Purchase Logged!")
 
+            # ==========================================
+            # 2. FIXED EXPENSES MODULE
+            # ==========================================
             elif acc_type == "Fixed Expenses":
                 st.markdown("### 💸 Fixed Expense Entry")
                 e_date = st.date_input("Expense Date", datetime.date.today(), key="e_date")
@@ -255,8 +268,107 @@ elif choice == "Admin Login":
                     supabase.table("accounts").insert({"date": str(e_date), "type": "Fixed Expense", "category": e_cat, "amount": e_amt}).execute()
                     st.success("Expense Recorded!")
 
+            # ==========================================
+            # 3. NEW: PENDING CREDIT CUSTOMER DASHBOARD & NOTIFICATION HUB
+            # ==========================================
+            elif acc_type == "Pending Credit Dashboard 🔔":
+                st.markdown("### 👥 Client Credit Line Monitoring Hub")
+                try:
+                    # Scan total credit accumulation from orders
+                    credit_res = supabase.table("orders").select("*").eq("payment_mode", "Credit").execute()
+                    if credit_res.data:
+                        df_credit_orders = pd.DataFrame(credit_res.data)
+                        df_cust_credit = df_credit_orders.groupby(['customer_name', 'phone_number'])['amount'].sum().reset_index()
+                        df_cust_credit.columns = ["Client Name", "Contact Token", "Total Credit Accumulated (₹)"]
+                        
+                        # Scan credit recovery parameters from accounts
+                        recovery_res = supabase.table("accounts").select("*").eq("category", "Credit Recovery").execute()
+                        recovery_dict = {}
+                        if recovery_res.data:
+                            for rec_row in recovery_res.data:
+                                phone_tag = rec_row.get("notes", "").replace("Phone Recovery: ", "").strip()
+                                recovery_dict[phone_tag] = recovery_dict.get(phone_tag, 0.0) + float(rec_row.get("amount", 0))
+                        
+                        verified_credit_list = []
+                        for _, row in df_cust_credit.iterrows():
+                            ph = str(row["Contact Token"])
+                            total_sales_debited = float(row["Total Credit Accumulated (₹)"])
+                            total_recovered = float(recovery_dict.get(ph, 0.0))
+                            net_outstanding = total_sales_debited - total_recovered
+                            
+                            if net_outstanding > 0:
+                                verified_credit_list.append({
+                                    "Customer Name": row["Client Name"], "Phone Number": ph,
+                                    "Total Bill Credit (₹)": total_sales_debited, "Total Cleared (₹)": total_recovered,
+                                    "Net Outstanding Due (₹)": net_outstanding
+                                })
+                        
+                        if verified_credit_list:
+                            df_final_dues = pd.DataFrame(verified_credit_list)
+                            
+                            # DYNAMIC NOTIFICATION RISK BANNER
+                            st.error(f"⚠️ **Pending Payments Notification:** {len(df_final_dues)} custom client profiles are active! Total risk valuation: ₹{df_final_dues['Net Outstanding Due (₹)'].sum():,.2f}")
+                            st.dataframe(df_final_dues, use_container_width=True)
+                            
+                            st.markdown("#### 📥 Log Client Credit Recovery Entry")
+                            rec_col1, rec_col2 = st.columns(2)
+                            with rec_col1:
+                                r_date = st.date_input("Recovery Date", datetime.date.today(), key="rec_cl_dt")
+                                target_client = st.selectbox("Select Active Debtor", [f"{r['Customer Name']} ({r['Phone Number']})" for r in verified_credit_list], key="rec_cl_sl")
+                            with rec_col2:
+                                r_amount = st.number_input("Amount Recovered (₹)", min_value=0.0, step=50.0, key="rec_cl_am")
+                                
+                            if st.button("📡 Process Recovery Reduction Line"):
+                                if r_amount > 0:
+                                    ext_phone = target_client.split("(")[-1].replace(")", "").strip()
+                                    ext_name = target_client.split(" (")[0].strip()
+                                    supabase.table("accounts").insert({
+                                        "date": str(r_date), "type": "Income", "category": "Credit Recovery",
+                                        "item_name": f"Credit Recovery from {ext_name}", "qty": 1, "amount": float(r_amount), "notes": f"Phone Recovery: {ext_phone}"
+                                    }).execute()
+                                    st.success(f"✅ Recovered ₹{r_amount} from {ext_name}.")
+                                    st.rerun()
+                        else:
+                            st.success("🎉 All external customer credit profiles cleared safely!")
+                    else:
+                        st.info("Zero credit payment orders logged inside central database system.")
+                except Exception as ex_cr:
+                    st.caption(f"Credit Logic Evaluation Notice: {str(ex_cr)}")
+
+            # ==========================================
+            # 4. CHANNELS PAYOUT SETTLEMENT (UPGRADED WITH LIVE OUTSTANDING METRICS)
+            # ==========================================
             elif acc_type == "Channel Payout Settlements":
                 st.markdown("### 💳 Automated Payout Validation Logic")
+                
+                # --- LIVE LIVE OUTSTANDING AGGREGATOR CREDITS VIEW DISPLAY ---
+                st.markdown("#### 📊 Current Live Channel Credit Balance")
+                p_metrics_cols = st.columns(2)
+                platforms_list = ["Zomato", "Swiggy"]
+                
+                for idx, plat_tag in enumerate(platforms_list):
+                    try:
+                        # Fetch global gross order value trace limits lines matching platform
+                        s_query = supabase.table("orders").select("amount").eq("platform", plat_tag).execute()
+                        gross_calc_total = sum(float(r['amount']) for r in s_query.data) if s_query.data else 0.0
+                        
+                        # Fetch settled payment matrix parameters tracking categories from accounts
+                        p_query = supabase.table("accounts").select("amount").eq("category", f"{plat_tag} Payout").execute()
+                        payout_calc_total = sum(float(r['amount']) for r in p_query.data) if p_query.data else 0.0
+                        
+                        live_outstanding_payout_index = gross_calc_total - payout_calc_total
+                        
+                        with p_metrics_cols[idx]:
+                            st.metric(
+                                label=f"Live Outstanding Balance ({plat_tag})", 
+                                value=f"₹{live_outstanding_payout_index:,.2f}", 
+                                delta=f"Total Historical Sales: ₹{gross_calc_total:,.2f}",
+                                delta_color="off"
+                            )
+                    except Exception as e_metric:
+                        st.caption(f"Outstanding metric system loop latency: {str(e_metric)}")
+                        
+                st.markdown("---")
                 st.info("Select the date range and enter the exact amount received in your Bank.")
                 
                 col1, col2 = st.columns(2)
@@ -295,12 +407,14 @@ elif choice == "Admin Login":
                     commission_deducted = gross_sales - payout_received
                     if commission_deducted < 0: commission_deducted = 0.0
                     
+                    # Log real payout to bank as Revenue
                     supabase.table("accounts").insert({
                         "date": str(datetime.date.today()), "type": "Revenue", "category": f"{s_platform} Payout",
                         "item_name": f"Period: {start_date} to {end_date}", "amount": payout_received,
                         "notes": f"Gross Sales: {gross_sales:.2f}"
                     }).execute()
                     
+                    # Log commission deducted automatically as Expense
                     if commission_deducted > 0:
                         supabase.table("accounts").insert({
                             "date": str(datetime.date.today()), "type": "Expense", "category": "Platform Commission",
