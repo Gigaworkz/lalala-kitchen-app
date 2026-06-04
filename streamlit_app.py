@@ -30,12 +30,12 @@ if "bill_number_counter" not in st.session_state:
             if ext_numbers:
                 st.session_state.bill_number_counter = max(ext_numbers) + 1
             else:
-                st.session_state.bill_number_counter = 1001
+                st.session_state.bill_number_counter = 001
         else:
-            st.session_state.bill_number_counter = 1001
+            st.session_state.bill_number_counter = 001
     except Exception as ec:
         st.sidebar.warning(f"Counter Sync Delay Note: {str(ec)}")
-        st.session_state.bill_number_counter = 1001
+        st.session_state.bill_number_counter = 001
 
 if "billing_cart" not in st.session_state:
     st.session_state.billing_cart = []
