@@ -372,7 +372,6 @@ elif choice == "Admin Login":
             if search_trigger and search_query:
                 with st.spinner("Executing relational filter scans across cloud server databases..."):
                     try:
-                        # Query checking both Bill Number and Phone parameters systematically
                         if search_query.strip().startswith("LALALA"):
                             fetch_res = supabase.table("orders").select("*").eq("bill_number", search_query.strip()).execute()
                         else:
@@ -383,7 +382,6 @@ elif choice == "Admin Login":
                                 st.markdown("---")
                                 st.success(f"Record Matching Verified! Target Invoice Document: **{matched_bill['bill_number']}**")
                                 
-                                # Layout Frame Visual Matrix Creation
                                 v_col1, v_col2 = st.columns(2)
                                 with v_col1:
                                     st.write(f"📅 **Transaction Date:** {matched_bill.get('date', 'N/A')}")
@@ -394,11 +392,8 @@ elif choice == "Admin Login":
                                     st.write(f"💳 **Settlement Mode:** {matched_bill.get('payment_mode', 'Cash')}")
                                     st.write(f"💰 **Gross Amount Total:** ₹{float(matched_bill.get('amount', 0)):,.2f}")
                                     
-                                # Items loop string conversion representation inside a preview box
                                 st.markdown("**Billed Element Details Checklist:**")
                                 st.code(matched_bill.get('items_summary', '[]'), language='json')
-                                
-                                # Print re-trigger activation module placeholder link mapping
                                 st.button(f"🖨️ Re-Send Document to Printer ({matched_bill['bill_number']})", key=f"reprint_{matched_bill['bill_number']}")
                         else:
                             st.warning("Query Trace Completed. Absolute zero records discovered matching specifications inside Supabase.")
@@ -407,49 +402,179 @@ elif choice == "Admin Login":
 
             st.markdown("---")
             
-            # 🚨 Global Safety Header: Low Stock Alert Indicator
-            st.error("⚠️ **Proactive Critical Notice: Low Stock Alert Engine Active**")
-            st.caption("Placeholder layout bar: Items falling below minimum threshold boundaries will sequence logs down here safely during testing.")
-            st.markdown("---")
+            # --- GLOBAL DYNAMIC DATE RANGE FILTER WIDGETS ---
+            st.markdown("### 📅 Select Reporting Timeframe Window")
+            col_f_date, col_t_date = st.columns(2)
             
-            # Structural layout for the 7 requested reporting metrics windows
+            with col_f_date:
+                default_from = datetime.date.today().replace(day=1) # Default to 1st of current month
+                from_date = st.date_input("From Date Boundary", default_from, key="report_from_date_widget")
+            
+            with col_t_date:
+                to_date = st.date_input("To Date Boundary", datetime.date.today(), key="report_to_date_widget")
+                
+            st.caption(f"💡 Visualizing system metrics and database records execution lines from **{from_date}** to **{to_date}**.")
+            st.markdown("---")
+
+            # --- FETCH REAL-TIME DATA BASED ON DATE FILTERS ---
+            orders_data = []
+            accounts_data = []
+            
+            try:
+                res_orders = supabase.table("orders").select("*").gte("date", str(from_date)).lte("date", str(to_date)).execute()
+                orders_data = res_orders.data if res_orders.data else []
+            except Exception as ex:
+                st.warning(f"Orders Query Execution Boundary Note: {str(ex)}")
+                
+            try:
+                res_accounts = supabase.table("accounts").select("*").gte("date", str(from_date)).lte("date", str(to_date)).execute()
+                accounts_data = res_accounts.data if res_accounts.data else []
+            except Exception as ex:
+                st.warning(f"Accounts Query Execution Boundary Note: {str(ex)}")
+
+            df_orders = pd.DataFrame(orders_data)
+            df_accounts = pd.DataFrame(accounts_data)
+
+            # --- LOW STOCK SAFETY ENGINE ALERT LAYER ---
+            try:
+                sku_res = supabase.table("sku_master").select("*").execute()
+                if sku_res.data:
+                    # Column parsing safe handling (checking fallback keys)
+                    low_stock_items = [row for row in sku_res.data if float(row.get('current_stock', 0)) < float(row.get('Min Stock Level', row.get('Minimum stock required', 5)))]
+                    if low_stock_items:
+                        st.error(f"⚠️ **Low Stock Alert Engine:** {len(low_stock_items)} raw materials dropped below standard security threshold settings boundaries!")
+                        with st.expander("🔍 View Missing SKU Inventory Allocation List"):
+                            for item in low_stock_items:
+                                st.write(f"• **{item.get('Ingerdient Name')}**: Stock is `{item.get('current_stock')}` (Min Req: `{item.get('Min Stock Level', item.get('Minimum stock required'))}`)")
+            except Exception as e:
+                st.caption(f"SKU Alert Engine Link Note: {str(e)}")
+
+            # --- STRUCTURAL TABS RENDER WITH REAL MATHEMATICAL CORES ---
             tab_workdays, tab_dishes, tab_crm, tab_platforms, tab_wastage, tab_expenses, tab_deadstock = st.tabs([
-                "📅 Working Days Tracker",
-                "🍲 Dish Performance Matrix",
-                "👥 Customer Retention (CRM)",
-                "📱 Platform Individual Sales",
-                "🗑️ Food Waste SKU Analysis",
-                "💸 Monthly Expenses Breakdown",
+                "📅 Working Days Tracker", "🍲 Dish Performance Matrix", "👥 Customer Retention (CRM)",
+                "📱 Platform Individual Sales", "🗑️ Food Waste SKU Analysis", "💸 Monthly Expenses Breakdown", 
                 "🛑 3-Month Dead Stock Audit"
             ])
             
+            # 1. Working Days Tab
             with tab_workdays:
-                st.markdown("### 📅 Operational Days vs Leave Allocation Tracking")
-                st.info("Visual representation dashboard logic path: Calculates month-wise date sequences where zero sales bills were processed, even if supply purchases occurred.")
-                st.dataframe(pd.DataFrame(columns=["Month Year", "Calculated Total Active Days", "Calculated Zero-Sales (Leave) Days"]))
+                st.markdown("### 📅 Operational Days Summary Matrix")
+                if not df_orders.empty:
+                    total_active_days = df_orders['date'].nunique()
+                    st.metric(label="Active Counter Invoicing Days", value=f"{total_active_days} Days")
+                    
+                    df_day_summary = df_orders.groupby("date").agg(
+                        Bills_Processed=('bill_number', 'count'),
+                        Total_Collection=('amount', 'sum')
+                    ).reset_index().sort_values(by="date", ascending=False)
+                    
+                    st.dataframe(df_day_summary, use_container_width=True)
+                else:
+                    st.info("Zero active counter transactions trace logs found inside selected calendar boundaries.")
 
+            # 2. Dish Performance Tab
             with tab_dishes:
                 st.markdown("### 🍲 Top Performing Dishes & Volume Analytics")
-                st.info("Visual layout block: Renders structural charts identifying best selling menu items arranged sequentially by total item volume packed.")
+                if not df_orders.empty and 'items_summary' in df_orders.columns:
+                    all_items = []
+                    for idx, row in df_orders.iterrows():
+                        try:
+                            import ast
+                            # Parse array representation string cleanly
+                            items_list = ast.literal_eval(row['items_summary'])
+                            for item in items_list:
+                                all_items.append({
+                                    "Dish Particulars": item.get('dish'),
+                                    "Quantity Volume": int(item.get('qty', 0)),
+                                    "Revenue Generated (₹)": float(item.get('amount', 0))
+                                })
+                        except:
+                            pass
+                    if all_items:
+                        df_dishes = pd.DataFrame(all_items)
+                        df_summary = df_dishes.groupby("Dish Particulars").sum().reset_index().sort_values(by="Quantity Volume", ascending=False)
+                        
+                        st.dataframe(df_summary, use_container_width=True)
+                        st.bar_chart(data=df_summary, x="Dish Particulars", y="Quantity Volume")
+                    else:
+                        st.info("Item summaries parser array layout lines empty.")
+                else:
+                    st.info("No active production sales logs captured to map dish volume distribution trends.")
 
+            # 3. Customer CRM Tab
             with tab_crm:
                 st.markdown("### 👥 Customer Base Retention Ledger")
-                st.info("Visual data layout: Evaluates phone record indexes to cluster customers into New vs Recurring brackets safely.")
+                if not df_orders.empty and 'phone_number' in df_orders.columns:
+                    df_crm = df_orders.copy()
+                    df_crm['phone_number'] = df_crm['phone_number'].replace('', 'N/A').fillna('N/A')
+                    df_cust = df_crm.groupby(['customer_name', 'phone_number']).agg(
+                        Total_Orders=('bill_number', 'count'),
+                        Total_Spent=('amount', 'sum')
+                    ).reset_index().sort_values(by="Total_Orders", ascending=False)
+                    
+                    st.dataframe(df_cust, use_container_width=True)
+                else:
+                    st.info("CRM baseline analytics empty inside selected date brackets.")
 
+            # 4. Platform Performance Tab
             with tab_platforms:
-                st.markdown("### 📱 Platform Performance Statistics")
-                st.info("Visual presentation space: Direct comparison blocks tracking order velocity and numeric monetary value metrics between Zomato, Swiggy, and Takeaway channels.")
+                st.markdown("### 📱 Platform Channel Performance Statistics")
+                if not df_orders.empty and 'platform' in df_orders.columns:
+                    df_plat = df_orders.groupby("platform")["amount"].agg(['count', 'sum']).reset_index()
+                    df_plat.columns = ["Platform Channel", "Order Velocity", "Gross Sales Total (₹)"]
+                    
+                    st.dataframe(df_plat, use_container_width=True)
+                    st.bar_chart(data=df_plat, x="Platform Channel", y="Gross Sales Total (₹)")
+                else:
+                    st.info("No platform tagged transaction matrix data trace found.")
 
+            # 5. Food Waste SKU Tab
             with tab_wastage:
                 st.markdown("### 🗑️ Raw Stock Food Waste & Loss Volatility Matrix")
-                st.info("Visual database layer tracker: Highlights high-loss SKU entries sequence timelines recorded inside the loss modules.")
+                if not df_accounts.empty:
+                    df_waste = df_accounts[df_accounts['type'].str.contains('Wastage|Loss', case=False, na=False)]
+                    if not df_waste.empty:
+                        st.dataframe(df_waste[['date', 'category', 'item_name', 'qty', 'amount', 'notes']], use_container_width=True)
+                        st.metric("Consolidated Cost Incurred on Loss Modules", f"₹{df_waste['amount'].sum():,.2f}")
+                    else:
+                        st.success("Perfect Execution! Zero recorded waste allocation rows logs matched.")
+                else:
+                    st.info("Accounts matrix log lines empty for selected timeframe evaluation parameters.")
 
+            # 6. Monthly Expenses Tab
             with tab_expenses:
                 st.markdown("### 💸 Monthly Consolidated Expenditures Breakdown")
-                st.info("Visual distribution mapping chart area: Tracks operational overhead category distribution parameters across monthly boundaries.")
+                if not df_accounts.empty:
+                    df_exp = df_accounts[df_accounts['type'].str.contains('Expense|Fixed Expense', case=False, na=False)]
+                    if not df_exp.empty:
+                        df_exp_sum = df_exp.groupby("category")["amount"].sum().reset_index()
+                        df_exp_sum.columns = ["Expenditure Category", "Amount Spent (₹)"]
+                        
+                        st.dataframe(df_exp_sum, use_container_width=True)
+                        st.metric("Total Operating Expenditure (OPEX)", f"₹{df_exp['amount'].sum():,.2f}")
+                        st.bar_chart(data=df_exp_sum, x="Expenditure Category", y="Amount Spent (₹)")
+                    else:
+                        st.info("Zero operational debit records entered inside this calendar block.")
+                else:
+                    st.info("No expense ledger entries synchronized.")
 
+            # 7. Dead Stock Tab
             with tab_deadstock:
-                st.markdown("### 🛑 Dead Stock Audit Panel (90-Day Dormant Threshold)")
-                st.info("Critical business inspection window: Filters SKU master parameters to list ingredients with zero activity metrics inside the past 3 consecutive months.")
-    elif admin_pwd != "":
+                st.markdown("### 🛑 Dead Stock Audit Panel (Zero Activity Threshold)")
+                try:
+                    # Extract active components from recipe templates systematically
+                    bom_res = supabase.table("bom_master").select("item_name").execute()
+                    active_ingredients = set([row['item_name'] for row in bom_res.data]) if bom_res.data else set()
+                    
+                    sku_res = supabase.table("sku_master").select("*").execute()
+                    if sku_res.data:
+                        dead_stock = [r for r in sku_res.data if r.get('Ingerdient Name') not in active_ingredients]
+                        if dead_stock:
+                            st.warning("Dormant materials discovered inside system cluster storage records matrix (Not bound to any recipe):")
+                            df_dead = pd.DataFrame(dead_stock)
+                            st.dataframe(df_dead[['Ingerdient Name', 'current_stock', 'Purchase unit']], use_container_width=True)
+                        else:
+                            st.success("All raw stock variants tightly bound to active production items matrices!")
+                except Exception as es:
+                    st.caption(f"Inventory Audit Structural Mapping Log Notice: {str(es)}")    elif admin_pwd != "":
         st.error("Incorrect Password.")
