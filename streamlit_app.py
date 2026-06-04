@@ -116,7 +116,7 @@ if choice == "Billing":
                     "raw_items": st.session_state.billing_cart.copy()
                 }
 
-                # 2. Database Injection Logic
+                # 2. Database Orders Table Insertion
                 try:
                     supabase.table("orders").insert({
                         "date": str(bill_date), "bill_number": current_bill_id,
@@ -127,6 +127,33 @@ if choice == "Billing":
                     }).execute()
                     
                     st.success(f"✅ Bill {current_bill_id} Saved to Database!")
+                    
+                    # === 🚀 NEW CRITICAL LOGIC: SALES INTERMEDIATE BOM DECOUPLING ENGINE ===
+                    for cart_item in st.session_state.billing_cart:
+                        dish_name_token = cart_item.get('dish')
+                        ordered_qty = float(cart_item.get('qty', 1))
+                        
+                        # Fetch recipe items matching selected cooked dish from BOM master
+                        bom_query = supabase.table("bom_master").select("*").eq("dish_name", dish_name_token).execute()
+                        
+                        if bom_query.data:
+                            for recipe_row in bom_query.data:
+                                ingredient_name = recipe_row.get("item_name")
+                                recipe_unit_qty = float(recipe_row.get("qty", 0)) # Qty needed for 1 portion
+                                
+                                # Total weight deduction calculation rule
+                                total_deduction = recipe_unit_qty * ordered_qty
+                                
+                                # Fetch current stock configuration parameters safely
+                                sku_lookup = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', ingredient_name).execute()
+                                if sku_lookup.data:
+                                    current_live_stock = float(sku_lookup.data[0]['current_stock'])
+                                    new_calculated_stock = current_live_stock - total_deduction
+                                    
+                                    # Update live warehouse index counters
+                                    supabase.table("sku_master").update({"current_stock": new_calculated_stock}).eq('\"Ingerdient Name\"', ingredient_name).execute()
+                    
+                    st.caption("✨ Dynamic Inventory Calibration: Component metrics successfully adjusted based on recipe matrix specifications.")
                     st.session_state.billing_cart = [] # Now safe to clear cart
                     st.session_state.bill_number_counter += 1
                 except Exception as e:
