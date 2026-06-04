@@ -48,7 +48,7 @@ st.sidebar.title("Main Menu")
 choice = st.sidebar.radio("Go to", ["Billing", "Admin Login"])
 
 # ==========================================
-# --- MODULE 1: BILLING (HIGH-SPEED COUNTER WITH CUSTOM OPERATIONS) ---
+# --- MODULE 1: BILLING (WITH BACKDATE SELECTION & REAL PRINT PIPELINE) ---
 # ==========================================
 if choice == "Billing":
     st.subheader("🛒 Billing Counter")
@@ -75,6 +75,9 @@ if choice == "Billing":
         st.markdown("### 1. Customer & Channel Details")
         cust_name = st.text_input("Customer Name", placeholder="Type client name...")
         cust_phone = st.text_input("Phone Number", placeholder="Type 10-digit number...")
+        
+        # --- TASK 4: BACK-DATE CALENDAR OVERRIDE WIDGET ---
+        bill_date = st.date_input("Bill Date Execution Window", datetime.date.today(), key="billing_date_widget")
         
         channel = st.selectbox("Channel / Platform Tag", ["Direct Takeaway", "Swiggy", "Zomato", "Party Order"])
         default_pay = "Credit" if channel in ["Swiggy", "Zomato"] else "Cash"
@@ -110,11 +113,9 @@ if choice == "Billing":
     with col_cart:
         st.markdown("### 3. Invoice View")
         if st.session_state.billing_cart:
-            # --- START OF REPLACEMENT (EDIT 2) ---
             df_cart = pd.DataFrame(st.session_state.billing_cart)
             df_cart['Amount (₹)'] = df_cart['qty'] * df_cart['rate']
             
-            # Data Editor Matrix (Bracket properly closed here)
             st.data_editor(
                 df_cart[['dish', 'qty', 'rate', 'Amount (₹)']],
                 column_config={
@@ -130,24 +131,21 @@ if choice == "Billing":
             
             bill_total = df_cart['Amount (₹)'].sum()
             
-            # 1. Clear Current Cart Button (Munnadiye varum)
             if st.button("🗑️ Clear Current Cart", use_container_width=True, type="secondary"):
                 st.session_state.billing_cart = []
                 st.rerun()
                 
             st.markdown("---")
             
-            # 2. Next line: Generate Bill Button with standard DB injection functions
             if st.button("🏁 Generate Bill", type="primary", use_container_width=True):
                 with st.spinner("Processing transaction matrices and decrementing stock..."):
-                    # --- TASK 2: DUAL-TABLE LEAD GENERATION & REVENUE INJECTION HOOK ---
                     try:
                         c_name_val = cust_name if cust_name else 'Walking Customer'
                         c_phone_val = cust_phone if cust_phone else 'N/A'
                         
-                        # Step A: Push to core orders ledger
+                        # Step A: Push to core orders ledger with custom bill_date parameter
                         supabase.table("orders").insert({
-                            "date": str(datetime.date.today()),
+                            "date": str(bill_date),
                             "bill_number": current_bill_id,
                             "customer_name": c_name_val,
                             "phone_number": c_phone_val,
@@ -157,10 +155,10 @@ if choice == "Billing":
                             "items_summary": str(st.session_state.billing_cart)
                         }).execute()
                         
-                        # Step B: Automated Reverse Hook entry into accounts table (Varavu Entry)
+                        # Step B: Automated Reverse Hook entry into accounts table (Varavu Entry matching specified date)
                         account_notes = f"Auto-Bill Generated via Billing Counter. Channel Tag: {channel}"
                         supabase.table("accounts").insert({
-                            "date": str(datetime.date.today()),
+                            "date": str(bill_date),
                             "type": "Revenue",
                             "category": f"{channel} Sales",
                             "item_name": f"Bill Ref: {current_bill_id}",
@@ -190,7 +188,6 @@ if choice == "Billing":
                     st.session_state.bill_number_counter += 1
                     st.rerun()
 
-            # 3. Next line: Print and WhatsApp Buttons split into 2 columns side-by-side
             col_print, col_wa = st.columns(2)
             
             items_text = ""
@@ -201,7 +198,33 @@ if choice == "Billing":
 
             with col_print:
                 if st.button("🖨️ Print Receipt", use_container_width=True):
-                    st.success("Sent payload to browser print loop!")
+                    # --- TASK 4: STANDARD WEB HARDWARE PRINT COMPONENT INJECTION LOOP ---
+                    html_bill_items = "".join([f"<tr><td style='padding:5px;'>{r['dish']} x {r['qty']}</td><td style='text-align:right; padding:5px;'>₹{r['Amount (₹)']:.2f}</td></tr>" for i, r in df_cart.iterrows()])
+                    
+                    print_payload_html = f"""
+                    <div id="thermal-receipt" style="width:280px; font-family:'Courier New',Courier,monospace; font-size:12px; line-height:1.2; padding:10px; color:#000;">
+                        <h3 style="text-align:center; margin:0 0 5px 0;">LALALA CLOUD KITCHEN</h3>
+                        <p style="text-align:center; margin:0 0 10px 0; font-size:10px;">Pure Veg Signature Kitchen</p>
+                        <hr style="border-top:1px dashed #000; margin:5px 0;"/>
+                        <p style="margin:2px 0;"><b>Bill No:</b> {current_bill_id}</p>
+                        <p style="margin:2px 0;"><b>Date:</b> {bill_date}</p>
+                        <p style="margin:2px 0;"><b>Cust:</b> {c_name_val}</p>
+                        <p style="margin:2px 0;"><b>Type:</b> {channel} ({pay_mode})</p>
+                        <hr style="border-top:1px dashed #000; margin:5px 0;"/>
+                        <table style="width:100%; border-collapse:collapse; font-size:12px;">{html_bill_items}</table>
+                        <hr style="border-top:1px dashed #000; margin:5px 0;"/>
+                        <h4 style="display:flex; justify-content:space-between; margin:5px 0;"><span>GRAND TOTAL:</span> <span>₹{bill_total:,.2f}</span></h4>
+                        <hr style="border-top:1px dashed #000; margin:5px 0;"/>
+                        <p style="text-align:center; margin:10px 0 0 0; font-size:10px;">Good Food, Signature Feel! 🌱</p>
+                    </div>
+                    <script>
+                        window.print();
+                    </script>
+                    """
+                    # Standard execution wrapper invoking printing parameters on browser terminal frame
+                    st.components.v1.html(print_payload_html, height=0, width=0)
+                    st.success("Print command layout transmitted to connected system terminal!")
+                    
                     st.session_state.billing_cart = []
                     st.session_state.bill_number_counter += 1
                     st.rerun()
@@ -213,6 +236,7 @@ if choice == "Billing":
                             f"*LALALA CLOUD KITCHEN*\\n"
                             f"----------------------------\\n"
                             f"Bill No: {current_bill_id}\\n"
+                            f"Date: {bill_date}\\n"
                             f"Customer: {c_name_val}\\n"
                             f"Phone: {c_phone_val}\\n"
                             f"Channel: {channel}\\n"
@@ -233,9 +257,7 @@ if choice == "Billing":
                         st.error("Please insert customer mobile number first!")
 
             st.markdown("---")
-            # 4. Final Row: Bill Total Matrix Output Display
             st.markdown(f"### 📈 **Bill Total: ₹{bill_total:,.2f}**")
-            # --- END OF REPLACEMENT ---
         else:
             st.info("Invoice cart is empty. Please add elements to active layout matrix to see changes.")
 
