@@ -228,7 +228,7 @@ elif choice == "Admin Login":
             # --- EXTENDED NAVIGATION CONTROLS ---
             acc_type = st.radio(
                 "Select Action", 
-                ["Purchase Entry", "Fixed Expenses", "Pending Credit Dashboard 🔔", "Channel Payout Settlements"], 
+                ["Purchase Entry", "Fixed Expenses", "Pending Credit Dashboard ", "Channel Payout Settlements"], 
                 horizontal=True
             )
             st.markdown("---")
@@ -271,7 +271,7 @@ elif choice == "Admin Login":
             # ==========================================
             # 3. NEW: PENDING CREDIT CUSTOMER DASHBOARD & NOTIFICATION HUB
             # ==========================================
-            elif acc_type == "Pending Credit Dashboard 🔔":
+            elif acc_type == "Pending Credit Dashboard ":
                 st.markdown("### 👥 Direct & Party Client Credit Line Monitoring Hub")
                 try:
                     # 1. SCAN ORDERS AND EXCLUDE AGGREGATORS DIRECTLY FROM CLOUD ENGINE PIPELINE
