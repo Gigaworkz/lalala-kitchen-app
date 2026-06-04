@@ -140,9 +140,12 @@ if choice == "Billing":
             # 2. Next line: Generate Bill Button with standard DB injection functions
             if st.button("🏁 Generate Bill", type="primary", use_container_width=True):
                 with st.spinner("Processing transaction matrices and decrementing stock..."):
+                    # --- TASK 2: DUAL-TABLE LEAD GENERATION & REVENUE INJECTION HOOK ---
                     try:
                         c_name_val = cust_name if cust_name else 'Walking Customer'
                         c_phone_val = cust_phone if cust_phone else 'N/A'
+                        
+                        # Step A: Push to core orders ledger
                         supabase.table("orders").insert({
                             "date": str(datetime.date.today()),
                             "bill_number": current_bill_id,
@@ -153,8 +156,20 @@ if choice == "Billing":
                             "amount": float(bill_total),
                             "items_summary": str(st.session_state.billing_cart)
                         }).execute()
+                        
+                        # Step B: Automated Reverse Hook entry into accounts table (Varavu Entry)
+                        account_notes = f"Auto-Bill Generated via Billing Counter. Channel Tag: {channel}"
+                        supabase.table("accounts").insert({
+                            "date": str(datetime.date.today()),
+                            "type": "Revenue",
+                            "category": f"{channel} Sales",
+                            "item_name": f"Bill Ref: {current_bill_id}",
+                            "amount": float(bill_total),
+                            "notes": account_notes
+                        }).execute()
+                        
                     except Exception as ex:
-                        st.sidebar.warning(f"Orders Table Insert Note: {str(ex)}")
+                        st.sidebar.warning(f"Dual-Entry Ledger Injection Note: {str(ex)}")
 
                     for cart_row in st.session_state.billing_cart:
                         c_dish = cart_row['dish']
