@@ -576,5 +576,7 @@ elif choice == "Admin Login":
                         else:
                             st.success("All raw stock variants tightly bound to active production items matrices!")
                 except Exception as es:
-                    st.caption(f"Inventory Audit Structural Mapping Log Notice: {str(es)}")    elif admin_pwd != "":
+                    st.caption(f"Inventory Audit Structural Mapping Log Notice: {str(es)}")
+                    
+    elif admin_pwd != "":
         st.error("Incorrect Password.")
