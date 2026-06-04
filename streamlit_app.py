@@ -91,31 +91,63 @@ if choice == "Billing":
             df_cart['Amount (₹)'] = df_cart['qty'] * df_cart['rate']
             
             st.data_editor(
-                df_cart[['dish', 'qty', 'rate', 'Amount (₹)']],
-                column_config={
-                    "dish": "Dish Particulars",
-                    "qty": "Quantity Packed",
-                    "rate": "Unit Price (₹)",
-                    "Amount (₹)": "Subtotal (₹)"
-                },
-                disabled=["dish", "rate", "Amount (₹)"],
-                use_container_width=True,
-                key="billing_clean_matrix_editor"
-            )
-            
+                # --- NEW REALIGNED LAYOUT SEQUENCE (EDIT 2) ---
             bill_total = df_cart['Amount (₹)'].sum()
-            st.markdown(f"### 📈 **Bill Total: ₹{bill_total:,.2f}**")
+            
+            # 1. Clear Current Cart Button (Munnadiye varum)
+            if st.button("🗑️ Clear Current Cart", use_container_width=True, type="secondary"):
+                st.session_state.billing_cart = []
+                st.rerun()
+                
             st.markdown("---")
             
-            col_print, col_wa, col_clear = st.columns(3)
+            # 2. Next line: Generate Bill Button with standard DB injection functions
+            if st.button("🏁 Generate Bill", type="primary", use_container_width=True):
+                with st.spinner("Processing transaction matrices and decrementing stock..."):
+                    try:
+                        c_name_val = cust_name if cust_name else 'Walking Customer'
+                        c_phone_val = cust_phone if cust_phone else 'N/A'
+                        supabase.table("orders").insert({
+                            "date": str(datetime.date.today()),
+                            "bill_number": current_bill_id,
+                            "customer_name": c_name_val,
+                            "phone_number": c_phone_val,
+                            "platform": channel,
+                            "payment_mode": pay_mode,
+                            "amount": float(bill_total),
+                            "items_summary": str(st.session_state.billing_cart)
+                        }).execute()
+                    except Exception as ex:
+                        st.sidebar.warning(f"Orders Table Insert Note: {str(ex)}")
+
+                    for cart_row in st.session_state.billing_cart:
+                        c_dish = cart_row['dish']
+                        c_qty = cart_row['qty']
+                        bom_res = supabase.table("bom_master").select('*').eq('\"Dish Name\"', c_dish).execute()
+                        if bom_res.data:
+                            for ing in bom_res.data:
+                                ing_name = ing['Ingerdient Name']
+                                req_qty = float(ing['Required quantity']) * c_qty
+                                sku_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', ing_name).execute()
+                                if sku_res.data:
+                                    current = float(sku_res.data[0].get('current_stock', 0))
+                                    supabase.table("sku_master").update({"current_stock": current - req_qty}).eq('\"Ingerdient Name\"', ing_name).execute()
+                    
+                    st.success(f"Transaction Complete! Closed Invoice No: {current_bill_id}")
+                    st.balloons()
+                    st.session_state.billing_cart = []
+                    st.session_state.bill_number_counter += 1
+                    st.rerun()
+
+            # 3. Next line: Print and WhatsApp Buttons split into 2 columns side-by-side
+            col_print, col_wa = st.columns(2)
             
             items_text = ""
             for index, row in df_cart.iterrows():
                 items_text += f"• {row['dish']} x {row['qty']} = ₹{row['Amount (₹)']:.2f}\\n"
-            
             c_name_val = cust_name if cust_name else 'Walking Customer'
             c_phone_val = cust_phone if cust_phone else 'N/A'
-            
+
             with col_print:
                 if st.button("🖨️ Print Receipt", use_container_width=True):
                     st.success("Sent payload to browser print loop!")
@@ -149,48 +181,9 @@ if choice == "Billing":
                     else:
                         st.error("Please insert customer mobile number first!")
 
-            with col_clear:
-                if st.button("🗑️ Clear Current Cart", use_container_width=True, type="secondary"):
-                    st.session_state.billing_cart = []
-                    st.rerun()
-            
             st.markdown("---")
-            if st.button("🏁 Generate Bill", type="primary", use_container_width=True):
-                with st.spinner("Processing transaction matrices and decrementing stock..."):
-                    try:
-                        supabase.table("orders").insert({
-                            "date": str(datetime.date.today()),
-                            "bill_number": current_bill_id,
-                            "customer_name": c_name_val,
-                            "phone_number": c_phone_val,
-                            "platform": channel,
-                            "payment_mode": pay_mode,
-                            "amount": float(bill_total),
-                            "items_summary": str(st.session_state.billing_cart)
-                        }).execute()
-                    except Exception as ex:
-                        st.sidebar.warning(f"Orders Table Insert Note: {str(ex)}")
-
-                    for cart_row in st.session_state.billing_cart:
-                        c_dish = cart_row['dish']
-                        c_qty = cart_row['qty']
-                        
-                        bom_res = supabase.table("bom_master").select('*').eq('\"Dish Name\"', c_dish).execute()
-                        if bom_res.data:
-                            for ing in bom_res.data:
-                                ing_name = ing['Ingerdient Name']
-                                req_qty = float(ing['Required quantity']) * c_qty
-                                
-                                sku_res = supabase.table("sku_master").select("current_stock").eq('\"Ingerdient Name\"', ing_name).execute()
-                                if sku_res.data:
-                                    current = float(sku_res.data[0].get('current_stock', 0))
-                                    supabase.table("sku_master").update({"current_stock": current - req_qty}).eq('\"Ingerdient Name\"', ing_name).execute()
-                    
-                    st.success(f"Transaction Complete! Closed Invoice No: {current_bill_id}")
-                    st.balloons()
-                    st.session_state.billing_cart = []
-                    st.session_state.bill_number_counter += 1
-                    st.rerun()
+            # 4. Final Row: Bill Total Matrix Output Display
+            st.markdown(f"### 📈 **Bill Total: ₹{bill_total:,.2f}**")
         else:
             st.info("Invoice cart is empty. Please add elements to active layout matrix to see changes.")
 
