@@ -13,7 +13,7 @@ st.set_page_config(page_title="Sig-nature Kitchen", layout="wide")
 
 # FIX 2: Admin toggle — False பண்ணா login disable ஆகும், True பண்ணா enable
 ADMIN_ENABLED      = True
-ADMIN_PASSWORD_KEY = st.secrets.get("ADMIN_PASSWORD", "\")
+ADMIN_PASSWORD_KEY = st.secrets.get("ADMIN_PASSWORD", "l")
 
 # --- BILL COUNTER ---
 if "bill_number_counter" not in st.session_state:
