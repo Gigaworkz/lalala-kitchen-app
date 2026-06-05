@@ -12,7 +12,7 @@ supabase = create_client(url, key)
 st.set_page_config(page_title="Sig-nature Kitchen", layout="wide")
 
 # FIX 2: Admin toggle — False பண்ணா login disable ஆகும், True பண்ணா enable
-ADMIN_ENABLED      = True
+ADMIN_ENABLED      = False
 ADMIN_PASSWORD_KEY = st.secrets.get("ADMIN_PASSWORD", "140226")
 
 # --- BILL COUNTER ---
