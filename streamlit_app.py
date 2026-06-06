@@ -11,9 +11,11 @@ supabase = create_client(url, key)
 
 st.set_page_config(page_title="Sig-nature Kitchen", layout="wide")
 
-# FIX 2: Admin toggle — False பண்ணா login disable ஆகும், True பண்ணா enable
-ADMIN_ENABLED      = True
-ADMIN_PASSWORD_KEY = st.secrets.get("ADMIN_PASSWORD", "l")
+# FIX 1: ADMIN TOGGLE
+# False = No password, direct access
+# True  = Password required
+ADMIN_ENABLED      = False
+ADMIN_PASSWORD_KEY = st.secrets.get("ADMIN_PASSWORD", "140226")
 
 # --- BILL COUNTER ---
 if "bill_number_counter" not in st.session_state:
@@ -35,13 +37,13 @@ if "bill_number_counter" not in st.session_state:
     except:
         st.session_state.bill_number_counter = 1
 
-if "billing_cart"       not in st.session_state: st.session_state.billing_cart       = []
-if "last_bill_data"     not in st.session_state: st.session_state.last_bill_data     = None
-if "input_phone_cache"  not in st.session_state: st.session_state.input_phone_cache  = ""
-if "input_name_cache"   not in st.session_state: st.session_state.input_name_cache   = ""
+if "billing_cart"      not in st.session_state: st.session_state.billing_cart      = []
+if "last_bill_data"    not in st.session_state: st.session_state.last_bill_data    = None
+if "input_phone_cache" not in st.session_state: st.session_state.input_phone_cache = ""
+if "input_name_cache"  not in st.session_state: st.session_state.input_name_cache  = ""
 
 # ==============================================================================
-# HELPER: BOM-BASED STOCK DEDUCTION
+# HELPER: BOM STOCK DEDUCTION
 # ==============================================================================
 def deduct_stock_via_bom(dish_name, ordered_qty):
     try:
@@ -63,7 +65,9 @@ def deduct_stock_via_bom(dish_name, ordered_qty):
             sku_lookup = supabase.table("sku_master").select("current_stock").eq("Ingerdient Name", ingredient_name).execute()
             if sku_lookup.data:
                 current_stock = float(sku_lookup.data[0].get("current_stock") or 0)
-                supabase.table("sku_master").update({"current_stock": current_stock - total_deduction}).eq("Ingerdient Name", ingredient_name).execute()
+                supabase.table("sku_master").update(
+                    {"current_stock": current_stock - total_deduction}
+                ).eq("Ingerdient Name", ingredient_name).execute()
             else:
                 st.warning(f"Ingredient '{ingredient_name}' not found in SKU master.")
     except Exception as e:
@@ -71,14 +75,17 @@ def deduct_stock_via_bom(dish_name, ordered_qty):
 
 
 # ==============================================================================
-# HELPER: BOM ingredient cost for a dish
+# HELPER: BOM ingredient cost for a dish (using Market Price)
 # ==============================================================================
 def get_bom_cost(dish_name, bom_data, sku_price_map):
     total_cost = 0.0
-    matched = [r for r in bom_data if str(r.get("Dish Name","")).strip().upper() == dish_name.strip().upper()]
+    matched = [
+        r for r in bom_data
+        if str(r.get("Dish Name", "")).strip().upper() == dish_name.strip().upper()
+    ]
     for row in matched:
-        ing  = str(row.get("Ingerdient Name","")).strip()
-        qty  = float(row.get("Required quantity") or 0)
+        ing   = str(row.get("Ingerdient Name", "")).strip()
+        qty   = float(row.get("Required quantity") or 0)
         price = float(sku_price_map.get(ing, 0))
         total_cost += qty * price
     return total_cost
@@ -253,7 +260,10 @@ if choice == "Billing":
             sh1, sh2 = st.columns(2)
             with sh1:
                 if st.button("🖨️ Print / Save PDF", use_container_width=True):
-                    html_items = "".join([f"<tr><td>{i['dish']} x {i['qty']}</td><td>₹{i['amount']:.2f}</td></tr>" for i in lb["raw_items"]])
+                    html_items = "".join([
+                        f"<tr><td>{i['dish']} x {i['qty']}</td><td>₹{i['amount']:.2f}</td></tr>"
+                        for i in lb["raw_items"]
+                    ])
                     st.components.v1.html(f"""
                     <div style="font-family:monospace;width:280px;padding:10px;">
                         <h3 style="text-align:center;">LALALA CLOUD KITCHEN</h3>
@@ -282,15 +292,21 @@ if choice == "Billing":
 elif choice == "Admin Login":
     st.subheader("🔒 Admin Control Panel")
 
-    # FIX 2: Toggle check
+    # FIX 1: Password toggle logic
+    admin_access = False
     if not ADMIN_ENABLED:
-        st.warning("⚠️ Admin access is temporarily disabled. Contact developer to enable.")
-        st.stop()
+        # Direct access — no password
+        admin_access = True
+        st.info("🔓 Admin access is open (password disabled).")
+    else:
+        admin_pwd = st.text_input("Enter Password", type="password")
+        if admin_pwd == ADMIN_PASSWORD_KEY:
+            admin_access = True
+            st.success("Access Granted.")
+        elif admin_pwd != "":
+            st.error("❌ Incorrect Password.")
 
-    admin_pwd = st.text_input("Enter Password", type="password")
-
-    if admin_pwd == ADMIN_PASSWORD_KEY:
-        st.success("Access Granted.")
+    if admin_access:
         admin_tab = st.sidebar.radio("Admin Menu",
             ["Inventory Status", "Accounts Entry Panel", "Wastage Entry", "Report Analytics"])
 
@@ -303,24 +319,31 @@ elif choice == "Admin Login":
                 sku_data = supabase.table("sku_master").select("*").execute()
                 if sku_data.data:
                     df = pd.DataFrame(sku_data.data)
+                    df["current_stock"] = pd.to_numeric(df["current_stock"], errors="coerce").fillna(0)
+                    df["Market Price"]  = pd.to_numeric(df["Market Price"],  errors="coerce").fillna(0)
 
-                    # FIX 3a: Stock Worth = current_stock × Market Price
-                    df["current_stock"]  = pd.to_numeric(df["current_stock"], errors="coerce").fillna(0)
-                    df["Market Price"]   = pd.to_numeric(df["Market Price"], errors="coerce").fillna(0)
+                    # FIX 2: Stock Worth = current_stock × Market Price (latest purchase price)
+                    # price note = base reference price (never changes)
+                    # Market Price = updated on every purchase
                     df["Stock Worth (₹)"] = df["current_stock"] * df["Market Price"]
 
-                    display_cols = [c for c in ["Ingerdient Name", "Category", "current_stock", "Purchase unit",
-                                                "Market Price", "Stock Worth (₹)", "Min Stock Level"] if c in df.columns]
+                    display_cols = [c for c in [
+                        "Ingerdient Name", "Category", "current_stock", "Purchase unit",
+                        "price note", "Market Price", "Stock Worth (₹)", "Min Stock Level"
+                    ] if c in df.columns]
                     st.dataframe(df[display_cols], use_container_width=True)
 
                     total_worth = df["Stock Worth (₹)"].sum()
                     st.metric("📦 Total Inventory Worth", f"₹{total_worth:,.2f}")
 
                     if st.button("Generate Purchase List"):
-                        low = df[df["current_stock"] < df["Min Stock Level"].apply(lambda x: float(x) if x else 0)]
+                        low = df[df["current_stock"] < df["Min Stock Level"].apply(lambda x: float(x or 0))]
                         if not low.empty:
                             st.warning("⚠️ Items below minimum stock:")
-                            st.dataframe(low[["Ingerdient Name", "current_stock", "Purchase unit", "Min Stock Level"]], use_container_width=True)
+                            st.dataframe(
+                                low[["Ingerdient Name", "current_stock", "Purchase unit", "Min Stock Level"]],
+                                use_container_width=True
+                            )
                         else:
                             st.success("All stock levels within safe limits!")
             except Exception as e:
@@ -342,36 +365,48 @@ elif choice == "Admin Login":
                     p_item_res = supabase.table("sku_master").select("*").execute()
                     item_data  = {
                         i["Ingerdient Name"]: {
-                            "unit" : i.get("Purchase unit", ""),
-                            "price": float(i.get("Market Price") or 0)
+                            "unit"      : i.get("Purchase unit", ""),
+                            "mkt_price" : float(i.get("Market Price") or 0),
+                            "base_price": float(i.get("price note")  or 0)
                         }
-                        for i in p_item_res.data
+                        for i in p_item_res.data if i.get("Ingerdient Name")
                     } if p_item_res.data else {}
 
                     col1, col2 = st.columns(2)
                     with col1:
                         p_date = st.date_input("Purchase Date", datetime.date.today(), key="p_date")
                         p_item = st.selectbox("Select Item", list(item_data.keys()), key="p_item")
-                        s_unit = item_data[p_item]["unit"]
-                        old_price = item_data[p_item]["price"]
-                        st.info(f"Unit: **{s_unit}** | Current Market Price: **₹{old_price}**")
+                        s_unit      = item_data[p_item]["unit"]
+                        old_mkt     = item_data[p_item]["mkt_price"]
+                        base_price  = item_data[p_item]["base_price"]
+                        st.info(f"Unit: **{s_unit}**")
+                        # FIX 2: Show both prices clearly
+                        pc1, pc2 = st.columns(2)
+                        pc1.metric("Base Price (Reference)", f"₹{base_price}", help="price note — never changes")
+                        pc2.metric("Current Market Price", f"₹{old_mkt}", help="Updated on each purchase")
                     with col2:
-                        p_qty   = st.number_input(f"Qty ({s_unit})", min_value=0.1, key="p_qty")
-                        p_amt   = st.number_input("Total Amount Spent (₹)", min_value=0.0, key="p_amt")
-                        # FIX 3b: Market price update on purchase
-                        new_price = st.number_input("Actual Purchase Price per unit (₹)", min_value=0.0,
-                                                     value=old_price, key="p_new_price",
-                                                     help="If price changed, update here — auto-saves to SKU master")
+                        p_qty = st.number_input(f"Qty ({s_unit})", min_value=0.1, key="p_qty")
+                        p_amt = st.number_input("Total Amount Spent (₹)", min_value=0.0, key="p_amt")
+                        # Auto-calculate per unit price from total
+                        auto_price = round(p_amt / p_qty, 2) if p_qty > 0 else old_mkt
+                        new_price  = st.number_input(
+                            f"Actual Price per {s_unit} (₹)",
+                            min_value=0.0,
+                            value=float(auto_price),
+                            key="p_new_price",
+                            help="Auto-calculated from total ÷ qty. Edit if needed. Saves to Market Price."
+                        )
+
+                    if new_price != old_mkt:
+                        st.warning(f"⚠️ Market Price will update: ₹{old_mkt} → ₹{new_price}")
 
                     if st.button("Submit Purchase"):
                         curr_res = supabase.table("sku_master").select("current_stock").eq("Ingerdient Name", p_item).execute()
                         curr     = float(curr_res.data[0].get("current_stock") or 0)
-                        # Update stock + market price
-                        update_payload = {"current_stock": curr + p_qty}
-                        if new_price != old_price:
-                            update_payload["Market Price"] = new_price
-                        supabase.table("sku_master").update(update_payload).eq("Ingerdient Name", p_item).execute()
-                        # Log as expense
+                        supabase.table("sku_master").update({
+                            "current_stock": curr + p_qty,
+                            "Market Price" : new_price          # FIX 2: Always update market price
+                        }).eq("Ingerdient Name", p_item).execute()
                         supabase.table("accounts").insert({
                             "date"     : str(p_date),
                             "type"     : "Expense",
@@ -380,11 +415,9 @@ elif choice == "Admin Login":
                             "amount"   : p_amt,
                             "qty"      : p_qty,
                             "unit"     : s_unit,
-                            "notes"    : f"Price/unit: ₹{new_price}"
+                            "notes"    : f"Price/unit: ₹{new_price} | Base: ₹{base_price}"
                         }).execute()
-                        if new_price != old_price:
-                            st.info(f"📈 Market price updated: ₹{old_price} → ₹{new_price}")
-                        st.success("✅ Purchase logged! Stock & price updated.")
+                        st.success(f"✅ Purchase logged! Market Price updated to ₹{new_price}.")
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -425,8 +458,8 @@ elif choice == "Admin Login":
                                 due       = billed - recovered
                                 if due > 0:
                                     verified.append({
-                                        "Customer"       : row["Client"],
-                                        "Phone"          : ph,
+                                        "Customer"        : row["Client"],
+                                        "Phone"           : ph,
                                         "Total Billed (₹)": billed,
                                         "Recovered (₹)"  : recovered,
                                         "Net Due (₹)"    : due
@@ -439,7 +472,8 @@ elif choice == "Admin Login":
                                 rc1, rc2 = st.columns(2)
                                 with rc1:
                                     r_date = st.date_input("Recovery Date", datetime.date.today(), key="rec_date")
-                                    target = st.selectbox("Select Client", [f"{r['Customer']} ({r['Phone']})" for r in verified], key="rec_client")
+                                    target = st.selectbox("Select Client",
+                                        [f"{r['Customer']} ({r['Phone']})" for r in verified], key="rec_client")
                                 with rc2:
                                     r_amt = st.number_input("Amount Recovered (₹)", min_value=0.0, step=50.0, key="rec_amt")
                                 if st.button("Process Recovery"):
@@ -535,7 +569,8 @@ elif choice == "Admin Login":
         # ==========================================
         elif admin_tab == "Wastage Entry":
             st.subheader("🗑️ Wastage & Loss Entry")
-            w_category = st.radio("Type", ["Raw Material Loss", "Cooked Item Waste", "Complimentary / Promo"], horizontal=True)
+            w_category = st.radio("Type",
+                ["Raw Material Loss", "Cooked Item Waste", "Complimentary / Promo"], horizontal=True)
 
             try:
                 m_res     = supabase.table("menu_master").select("*").execute()
@@ -543,10 +578,10 @@ elif choice == "Admin Login":
             except:
                 dish_list = []
 
-            # FIX 1: float(None) crash fix — use `or 0` everywhere
             if w_category == "Raw Material Loss":
                 try:
                     w_res  = supabase.table("sku_master").select("*").execute()
+                    # FIX 1: float(None) crash fix
                     w_data = {
                         i["Ingerdient Name"]: {
                             "unit" : i.get("Purchase unit", ""),
@@ -568,7 +603,9 @@ elif choice == "Admin Login":
 
                     if st.button("Record Raw Loss"):
                         if w_qty <= s_stock:
-                            supabase.table("sku_master").update({"current_stock": s_stock - float(w_qty)}).eq("Ingerdient Name", w_item).execute()
+                            supabase.table("sku_master").update(
+                                {"current_stock": s_stock - float(w_qty)}
+                            ).eq("Ingerdient Name", w_item).execute()
                             supabase.table("accounts").insert({
                                 "date"     : str(w_date),
                                 "type"     : "Wastage",
@@ -642,16 +679,15 @@ elif choice == "Admin Login":
             st.markdown("### 🔍 Past Bill Search")
             sc1, sc2 = st.columns([3, 1])
             with sc1:
-                search_query = st.text_input("Bill Number or Phone Number", placeholder="LALALA-2026- or phone", key="search_input")
+                search_query = st.text_input("Bill Number or Phone Number",
+                    placeholder="LALALA-2026- or phone", key="search_input")
             with sc2:
                 st.write("##")
                 search_trigger = st.button("🔍 Search", use_container_width=True, type="primary")
             if search_trigger and search_query:
                 try:
-                    res = supabase.table("orders").select("*").eq(
-                        "bill_number" if search_query.strip().startswith("LALALA") else "phone_number",
-                        search_query.strip()
-                    ).execute()
+                    field = "bill_number" if search_query.strip().startswith("LALALA") else "phone_number"
+                    res   = supabase.table("orders").select("*").eq(field, search_query.strip()).execute()
                     if res.data:
                         for bill in res.data:
                             st.markdown("---")
@@ -719,7 +755,7 @@ elif choice == "Admin Login":
                 st.markdown("### Profit & Loss Summary")
                 if not df_accounts.empty:
                     total_revenue = df_accounts[df_accounts["type"] == "Revenue"]["amount"].sum()
-                    total_expense = df_accounts[df_accounts["type"].isin(["Expense", "Fixed Expense", "Wastage"])]["amount"].sum()
+                    total_expense = df_accounts[df_accounts["type"].isin(["Expense","Fixed Expense","Wastage"])]["amount"].sum()
                     net_profit    = total_revenue - total_expense
                     m1, m2, m3 = st.columns(3)
                     m1.metric("💰 Total Revenue", f"₹{total_revenue:,.2f}")
@@ -733,19 +769,19 @@ elif choice == "Admin Login":
                     st.markdown("---")
                     st.markdown("#### Revenue Breakdown")
                     df_rev = df_accounts[df_accounts["type"] == "Revenue"].groupby("category")["amount"].sum().reset_index()
-                    df_rev.columns = ["Category", "Amount (₹)"]
+                    df_rev.columns = ["Category","Amount (₹)"]
                     if not df_rev.empty:
                         st.dataframe(df_rev, use_container_width=True)
                         st.bar_chart(df_rev, x="Category", y="Amount (₹)")
                     st.markdown("#### Expense Breakdown")
                     df_exp = df_accounts[df_accounts["type"].isin(["Expense","Fixed Expense","Wastage"])].groupby("category")["amount"].sum().reset_index()
-                    df_exp.columns = ["Category", "Amount (₹)"]
+                    df_exp.columns = ["Category","Amount (₹)"]
                     if not df_exp.empty:
                         st.dataframe(df_exp, use_container_width=True)
                         st.bar_chart(df_exp, x="Category", y="Amount (₹)")
                     st.markdown("#### P&L Overview")
                     st.bar_chart(pd.DataFrame({
-                        "Category"  : ["Revenue", "Expenses", "Net P&L"],
+                        "Category"  : ["Revenue","Expenses","Net P&L"],
                         "Amount (₹)": [total_revenue, total_expense, net_profit]
                     }), x="Category", y="Amount (₹)")
                 else:
@@ -765,22 +801,22 @@ elif choice == "Admin Login":
 
             # ---- TAB 3: DISH PERFORMANCE ----
             with tab3:
-                st.markdown("### Dish Performance")
+                st.markdown("### 🍲 Dish Performance")
 
-                # Fetch BOM & SKU price map for profit calculation
+                # Load BOM, SKU price map, menu price
                 try:
-                    bom_data_res = supabase.table("bom_master").select("*").execute()
-                    bom_data     = bom_data_res.data or []
-                    sku_res      = supabase.table("sku_master").select("Ingerdient Name", "Market Price").execute()
+                    bom_data_res  = supabase.table("bom_master").select("*").execute()
+                    bom_data      = bom_data_res.data or []
+                    sku_p_res     = supabase.table("sku_master").select("Ingerdient Name","Market Price").execute()
                     sku_price_map = {
                         r["Ingerdient Name"]: float(r.get("Market Price") or 0)
-                        for r in sku_res.data
-                    } if sku_res.data else {}
-                    menu_res  = supabase.table("menu_master").select("Dish Name", "Price").execute()
-                    menu_price = {
+                        for r in sku_p_res.data
+                    } if sku_p_res.data else {}
+                    menu_p_res  = supabase.table("menu_master").select("Dish Name","Price").execute()
+                    menu_price  = {
                         r["Dish Name"]: float(r.get("Price") or 0)
-                        for r in menu_res.data
-                    } if menu_res.data else {}
+                        for r in menu_p_res.data
+                    } if menu_p_res.data else {}
                 except:
                     bom_data, sku_price_map, menu_price = [], {}, {}
 
@@ -790,67 +826,83 @@ elif choice == "Admin Login":
                         try:
                             items = ast.literal_eval(row["items_summary"])
                             for item in items:
-                                dish = item.get("dish","")
-                                qty  = int(item.get("qty", 0))
-                                rev  = float(item.get("amount", 0))
+                                dish     = item.get("dish","")
+                                qty      = int(item.get("qty", 0))
+                                rev      = float(item.get("amount", 0))
                                 ing_cost = get_bom_cost(dish, bom_data, sku_price_map) * qty
                                 all_items.append({
-                                    "Dish"            : dish,
-                                    "Qty Sold"        : qty,
-                                    "Revenue (₹)"     : rev,
+                                    "Dish"               : dish,
+                                    "Qty Sold"           : qty,
+                                    "Revenue (₹)"        : rev,
                                     "Ingredient Cost (₹)": ing_cost,
-                                    "Profit (₹)"      : rev - ing_cost
+                                    "Profit (₹)"         : rev - ing_cost
                                 })
                         except:
                             pass
 
                     if all_items:
                         df_d = pd.DataFrame(all_items).groupby("Dish").sum().reset_index().sort_values("Qty Sold", ascending=False)
+                        st.markdown("#### Overall Summary")
                         st.dataframe(df_d, use_container_width=True)
                         st.bar_chart(df_d, x="Dish", y="Profit (₹)")
 
+                        # FIX 3: Per Item Profit Calculator
                         st.markdown("---")
-                        st.markdown("#### 🔍 Single Dish Deep Dive")
-                        dish_options = df_d["Dish"].tolist()
-                        selected_dish_report = st.selectbox("Select Dish to Analyse", dish_options, key="dish_dropdown")
+                        st.markdown("#### 🧮 Per Item Profit Calculator")
+                        dish_options            = df_d["Dish"].tolist()
+                        selected_dish_report    = st.selectbox(
+                            "Select Dish to Analyse", dish_options, key="dish_dropdown"
+                        )
                         if selected_dish_report:
-                            row = df_d[df_d["Dish"] == selected_dish_report].iloc[0]
-                            sell_price = float(menu_price.get(selected_dish_report, 0))
+                            sell_price   = float(menu_price.get(selected_dish_report, 0))
                             ing_cost_per = get_bom_cost(selected_dish_report, bom_data, sku_price_map)
                             profit_per   = sell_price - ing_cost_per
+                            margin_pct   = (profit_per / sell_price * 100) if sell_price > 0 else 0
 
-                            d1, d2, d3 = st.columns(3)
-                            d1.metric("Selling Price / Portion", f"₹{sell_price:.2f}")
-                            d2.metric("Ingredient Cost / Portion", f"₹{ing_cost_per:.2f}")
-                            d3.metric("Profit / Portion", f"₹{profit_per:.2f}",
-                                      delta="✅ Profitable" if profit_per > 0 else "❌ Loss",
-                                      delta_color="normal" if profit_per > 0 else "inverse")
+                            # Per portion metrics
+                            st.markdown("**Per Portion:**")
+                            p1, p2, p3, p4 = st.columns(4)
+                            p1.metric("Selling Price",      f"₹{sell_price:.2f}")
+                            p2.metric("Ingredient Cost",    f"₹{ing_cost_per:.2f}")
+                            p3.metric("Profit / Portion",   f"₹{profit_per:.2f}",
+                                delta="✅ Profitable" if profit_per > 0 else "❌ Loss Making",
+                                delta_color="normal" if profit_per > 0 else "inverse")
+                            p4.metric("Profit Margin",      f"{margin_pct:.1f}%")
 
                             st.markdown("---")
+
+                            # Total metrics for selected period
+                            row = df_d[df_d["Dish"] == selected_dish_report].iloc[0]
+                            st.markdown("**Period Total:**")
                             t1, t2, t3 = st.columns(3)
                             t1.metric("Total Portions Sold", int(row["Qty Sold"]))
-                            t2.metric("Total Revenue", f"₹{row['Revenue (₹)']:,.2f}")
-                            t3.metric("Total Profit", f"₹{row['Profit (₹)']:,.2f}")
+                            t2.metric("Total Revenue",       f"₹{row['Revenue (₹)']:,.2f}")
+                            t3.metric("Total Profit",        f"₹{row['Profit (₹)']:,.2f}")
 
-                            # Ingredient breakdown for this dish
-                            st.markdown("#### Ingredient Breakdown:")
-                            matched_bom = [r for r in bom_data if str(r.get("Dish Name","")).strip().upper() == selected_dish_report.strip().upper()]
+                            # Ingredient breakdown table
+                            st.markdown("**Ingredient Cost Breakdown:**")
+                            matched_bom = [
+                                r for r in bom_data
+                                if str(r.get("Dish Name","")).strip().upper() == selected_dish_report.strip().upper()
+                            ]
                             if matched_bom:
                                 bom_rows = []
                                 for r in matched_bom:
-                                    ing  = str(r.get("Ingerdient Name",""))
-                                    req  = float(r.get("Required quantity") or 0)
+                                    ing   = str(r.get("Ingerdient Name",""))
+                                    req   = float(r.get("Required quantity") or 0)
+                                    unit  = r.get("Unit","")
                                     price = float(sku_price_map.get(ing, 0))
                                     bom_rows.append({
-                                        "Ingredient"     : ing,
-                                        "Qty Required"   : req,
-                                        "Unit"           : r.get("Unit",""),
-                                        "Market Price"   : f"₹{price}",
-                                        "Cost Contribution": f"₹{req * price:.2f}"
+                                        "Ingredient"          : ing,
+                                        "Required Qty"        : f"{req} {unit}",
+                                        "Market Price / Unit" : f"₹{price}",
+                                        "Cost Contribution"   : f"₹{req * price:.2f}"
                                     })
                                 st.dataframe(pd.DataFrame(bom_rows), use_container_width=True)
+                            else:
+                                st.warning("No BOM recipe found for this dish.")
                 else:
-                    st.info("No dish data available.")
+                    st.info("No dish data available in selected range.")
 
             # ---- TAB 4: CRM ----
             with tab4:
@@ -905,15 +957,13 @@ elif choice == "Admin Login":
                 else:
                     st.info("No data.")
 
-            # ---- TAB 8: DEAD STOCK (FIX: 60-day order-based logic) ----
+            # ---- TAB 8: DEAD STOCK (60-day logic) ----
             with tab8:
                 st.markdown("### 🛑 Dead Stock Audit (60-Day Inactivity)")
                 try:
-                    # Step 1: Last 60 days orders
                     sixty_days_ago = datetime.date.today() - datetime.timedelta(days=60)
                     orders_60 = supabase.table("orders").select("items_summary").gte("date", str(sixty_days_ago)).execute()
 
-                    # Step 2: Parse all dishes sold in last 60 days
                     sold_dishes = set()
                     if orders_60.data:
                         for row in orders_60.data:
@@ -924,7 +974,6 @@ elif choice == "Admin Login":
                             except:
                                 pass
 
-                    # Step 3: BOM — find ingredients used in those dishes
                     bom_all = supabase.table("bom_master").select("*").execute()
                     active_ingredients = set()
                     if bom_all.data:
@@ -934,7 +983,6 @@ elif choice == "Admin Login":
                                 if ing:
                                     active_ingredients.add(ing)
 
-                    # Step 4: SKU — find ingredients NOT in active list
                     sku_all = supabase.table("sku_master").select("*").execute()
                     if sku_all.data:
                         dead = [
@@ -945,19 +993,16 @@ elif choice == "Admin Login":
                         if dead:
                             st.warning(f"⚠️ {len(dead)} ingredients unused in last 60 days (with stock remaining):")
                             df_dead = pd.DataFrame(dead)
+                            df_dead["current_stock"] = df_dead["current_stock"].apply(lambda x: float(x or 0))
+                            df_dead["Market Price"]  = df_dead["Market Price"].apply(lambda x: float(x or 0))
+                            df_dead["Stock Worth (₹)"] = df_dead["current_stock"] * df_dead["Market Price"]
                             display = [c for c in ["Ingerdient Name","current_stock","Purchase unit","Market Price","Stock Worth (₹)"] if c in df_dead.columns]
-                            if "current_stock" in df_dead.columns and "Market Price" in df_dead.columns:
-                                df_dead["Stock Worth (₹)"] = df_dead["current_stock"].apply(lambda x: float(x) if x else 0) * df_dead["Market Price"].apply(lambda x: float(x) if x else 0)
-                                display = ["Ingerdient Name","current_stock","Purchase unit","Market Price","Stock Worth (₹)"]
                             st.dataframe(df_dead[display], use_container_width=True)
                             st.error(f"💸 Dead Stock Total Worth: ₹{df_dead['Stock Worth (₹)'].sum():,.2f}")
-                            st.caption(f"Reference: Dishes sold since {sixty_days_ago} = {len(sold_dishes)} dishes | Active ingredients = {len(active_ingredients)}")
+                            st.caption(f"Reference: Dishes active since {sixty_days_ago}: {len(sold_dishes)} | Active ingredients: {len(active_ingredients)}")
                         else:
-                            st.success("✅ All stocked ingredients were used in the last 60 days!")
+                            st.success("✅ All stocked ingredients used in the last 60 days!")
                     else:
                         st.info("SKU master is empty.")
                 except Exception as e:
                     st.error(f"Dead Stock Error: {e}")
-
-    elif admin_pwd != "":
-        st.error("❌ Incorrect Password.")
