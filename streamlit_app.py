@@ -4,26 +4,64 @@ from datetime import datetime, date, timedelta
 from supabase import create_client, Client
 import urllib.parse
 import json
+import ast
 
 # ==========================================
-# 1. SETUP & CONFIGURATION
+# 1. LIVE DATABASE CONNECTION (Unga Secrets Line)
 # ==========================================
-# --- CONNECTION ---
 url = st.secrets["SUPABASE_URL"]
 key = st.secrets["SUPABASE_KEY"]
 supabase = create_client(url, key)
 
 st.set_page_config(page_title="Sig-nature Kitchen", layout="wide")
 
-# FIX 1: ADMIN TOGGLE
-# False = No password, direct access
-# True  = Password required
+# ADMIN ACCESSIBILITY TOGGLE
+# False = Direct access (No password while testing)
+# True  = Password prompt mandatory
 ADMIN_ENABLED      = False
 ADMIN_PASSWORD_KEY = st.secrets.get("ADMIN_PASSWORD", "140226")
 
 # ==========================================
-# 2. HELPER DATA FETCHERS & DATA PIPELINES
+# 2. AUTOMATED BILL COUNTER INITIALIZATION
 # ==========================================
+if "bill_number_counter" not in st.session_state:
+    try:
+        res_counter = supabase.table("orders").select("bill_number").execute()
+        if res_counter.data:
+            ext_numbers = []
+            for row in res_counter.data:
+                b_num = row.get("bill_number", "")
+                if b_num and "-" in b_num:
+                    try:
+                        num_part = int(b_num.split("-")[-1])
+                        ext_numbers.append(num_part)
+                    except:
+                        pass
+            st.session_state.bill_number_counter = max(ext_numbers) + 1 if ext_numbers else 1
+        else:
+            st.session_state.bill_number_counter = 1
+    except:
+        st.session_state.bill_number_counter = 1
+
+# Session Caches
+if "billing_cart"      not in st.session_state: st.session_state.billing_cart      = []
+if "last_bill_data"    not in st.session_state: st.session_state.last_bill_data    = None
+if "input_phone_cache" not in st.session_state: st.session_state.input_phone_cache = ""
+if "input_name_cache"  not in st.session_state: st.session_state.input_name_cache  = ""
+
+# Dynamic Unit Converter
+def convert_units(qty, from_unit, to_unit):
+    f = str(from_unit).lower().strip()
+    t = str(to_unit).lower().strip()
+    if f == t:
+        return qty
+    if f == "kg" and t in ["gm", "g"]: return qty * 1000
+    if f in ["gm", "g"] and t == "kg": return qty / 1000
+    if f in ["l", "litre", "liter"] and t == "ml": return qty * 1000
+    if f == "ml" and t in ["l", "litre", "liter"]: return qty / 1000
+    return qty
+
+# Fetch Tables Utility
 def fetch_table(table_name: str) -> pd.DataFrame:
     try:
         res = supabase.table(table_name).select("*").execute()
@@ -31,698 +69,337 @@ def fetch_table(table_name: str) -> pd.DataFrame:
     except Exception:
         return pd.DataFrame()
 
-def generate_bill_number():
-    df = fetch_table("orders")
-    current_year = "2026"
-    prefix = f"LALALA-{current_year}-"
-    if df.empty or "bill_number" not in df.columns:
-        return f"{prefix}001"
-    
-    # Filter for current year bills
-    year_bills = df[df["bill_number"].str.startswith(prefix, na=False)]
-    if year_bills.empty:
-        return f"{prefix}001"
-    
-    try:
-        # Extract serial strings and compute highest increment
-        serials = year_bills["bill_number"].str.replace(prefix, "").astype(int)
-        next_serial = serials.max() + 1
-        return f"{prefix}{next_serial:03d}"
-    except:
-        return f"{prefix}{len(df)+1:03d}"
-
-def convert_units(qty, from_unit, to_unit):
-    """
-    Standardize metrics gracefully: gm <-> kg, ml <-> L, nos <-> nos.
-    Always helps cross-map purchase entities with system units safely.
-    """
-    f = from_unit.lower().strip()
-    t = to_unit.lower().strip()
-    if f == t:
-        return qty
-    # Weight conversions
-    if f == "kg" and t in ["gm", "g"]: return qty * 1000
-    if f in ["gm", "g"] and t == "kg": return qty / 1000
-    # Liquid conversions
-    if f in ["l", "litre", "liter"] and t == "ml": return qty * 1000
-    if f == "ml" and t in ["l", "litre", "liter"]: return qty / 1000
-    return qty
-
 # ==========================================
-# 3. CORE LOGIC ENGINE FUNCTIONS
+# 3. CORE CORE BUSINESS FUNCTIONS
 # ==========================================
-def get_bom_cost(dish_name, bom_df, sku_df):
-    """Calculates making cost for a dish based on raw master price maps."""
-    if bom_df.empty or sku_df.empty:
-        return 0.0
-    dish_bom = bom_df[bom_df["Dish Name"] == dish_name]
-    if dish_bom.empty:
-        return 0.0
-    
+def get_bom_cost(dish_name, bom_data, sku_df):
     total_cost = 0.0
-    for _, row in dish_bom.iterrows():
-        ing_name = row["Ingerdient Name"]
-        req_qty = float(row["Required quantity"])
-        bom_unit = str(row["Unit"]).lower()
+    if not bom_data or sku_df.empty:
+        return total_cost
+    matched = [r for r in bom_data if str(r.get("Dish Name", "")).strip().upper() == dish_name.strip().upper()]
+    for row in matched:
+        ing      = str(row.get("Ingerdient Name", "")).strip()
+        req_qty  = float(row.get("Required quantity") or 0)
+        bom_unit = str(row.get("Unit", "gm"))
         
-        sku_row = sku_df[sku_df["Ingerdient Name"] == ing_name]
+        sku_row = sku_df[sku_df["Ingerdient Name"] == ing]
         if not sku_row.empty:
-            mkt_price = float(sku_row.iloc[0]["Market Price"])
-            sku_unit = str(sku_row.iloc[0]["Purchase unit"]).lower()
+            mkt_price = float(sku_row.iloc[0].get("Market Price") or 0)
+            sku_unit  = str(sku_row.iloc[0].get("Purchase unit") or "gm")
             
-            # Map cost to standard equivalents
             converted_qty = convert_units(req_qty, bom_unit, sku_unit)
             total_cost += converted_qty * mkt_price
-            
     return round(total_cost, 2)
 
 def deduct_stock_via_bom(dish_name, ordered_qty):
-    """Automatically reduces raw materials from SKU Master on sale checkout."""
-    bom_df = fetch_table("bom_master")
-    sku_df = fetch_table("sku_master")
-    if bom_df.empty or sku_df.empty:
-        return
-        
-    dish_bom = bom_df[bom_df["Dish Name"] == dish_name]
-    for _, row in dish_bom.iterrows():
-        ing_name = row["Ingerdient Name"]
-        req_qty = float(row["Required quantity"]) * ordered_qty
-        bom_unit = str(row["Unit"])
-        
-        sku_row = sku_df[sku_df["Ingerdient Name"] == ing_name]
-        if not sku_row.empty:
-            current_stock = float(sku_row.iloc[0]["current_stock"])
-            sku_unit = str(sku_row.iloc[0]["Purchase unit"])
+    try:
+        bom_all = supabase.table("bom_master").select("*").execute()
+        if not bom_all.data: return
+        matched_rows = [row for row in bom_all.data if str(row.get("Dish Name", "")).strip().upper() == str(dish_name).strip().upper()]
+        for recipe_row in matched_rows:
+            ingredient_name = str(recipe_row.get("Ingerdient Name", "")).strip()
+            required_qty    = float(recipe_row.get("Required quantity") or 0)
+            bom_unit        = str(recipe_row.get("Unit", "gm"))
             
-            converted_deduction = convert_units(req_qty, bom_unit, sku_unit)
-            new_stock = current_stock - converted_deduction
-            
-            supabase.table("sku_master").update({"current_stock": new_stock}).eq("Ingerdient Name", ing_name).execute()
+            sku_lookup = supabase.table("sku_master").select("*").eq("Ingerdient Name", ingredient_name).execute()
+            if sku_lookup.data:
+                current_stock = float(sku_lookup.data[0].get("current_stock") or 0)
+                sku_unit      = str(sku_lookup.data[0].get("Purchase unit", "gm"))
+                
+                converted_deduction = convert_units(required_qty * float(ordered_qty), bom_unit, sku_unit)
+                supabase.table("sku_master").update({"current_stock": current_stock - converted_deduction}).eq("Ingerdient Name", ingredient_name).execute()
+    except Exception as e:
+        st.warning(f"Stock deduction warning: {str(e)}")
 
 # ==========================================
-# 4. STREAMLIT APPLICATION ROUTING
+# 4. HEADER LAYOUT DESIGN
 # ==========================================
-st.title("🍳 LALALA CLOUD KITCHEN (Signature Kitchen)")
-st.write("---")
+st.markdown('<h1 style="text-align:center;color:#1B5E20;">👨‍🍳 LALALA CLOUD KITCHEN 👨‍🍳</h1>', unsafe_allow_html=True)
+st.markdown('<p style="text-align:center;color:#388E3C;font-size:20px;">🍟🍔🥟 Good Food | 🌾 Sig-Nature Feel | 🟩 Pure VEG 🌱</p>', unsafe_allow_html=True)
 
-# Navigation Tabs
-tab_billing, tab_admin = st.tabs(["🛒 BILLING COUNTER", "🔐 ADMIN CONTROL PANEL"])
+st.sidebar.title("Main Menu")
+choice = st.sidebar.radio("Go to", ["Billing", "Admin Control Panel"])
 
 # ==========================================
 # MODULE A: BILLING COUNTER
 # ==========================================
-with tab_billing:
-    st.header("⚡ Instant Orders Settlement Desk")
-    
-    # Init Session Cart items
-    if "cart" not in st.session_state:
-        st.session_state.cart = []
-    
-    # Live cache loads
+if choice == "Billing":
+    st.subheader("🛒 Billing Counter")
+    current_bill_id = f"LALALA-2026-{st.session_state.bill_number_counter:03d}"
+    st.write(f"**Current Bill Number:** `{current_bill_id}`")
+    st.markdown("---")
+
     orders_df = fetch_table("orders")
     menu_df = fetch_table("menu_master")
-    
-    col_cust, col_dish = st.columns([1, 1])
-    
-    with col_cust:
-        st.subheader("1. Customer Profile Information")
+
+    col_input, col_cart = st.columns([2, 3])
+
+    with col_input:
+        st.markdown("### 1. Customer Details")
         
-        # Smart Search Trigger UI setup
-        phone_lookup = st.text_input("Phone Number Lookup (10 Digits / N/A)", max_chars=12)
-        cust_name_lookup = st.text_input("Customer Name Reference")
+        phone_lookup = st.text_input("Phone Number Lookup (10 digits / N/A)", value=st.session_state.input_phone_cache)
+        cust_name_lookup = st.text_input("Customer Name Reference", value=st.session_state.input_name_cache)
         
-        # Real-time Autofill engine
         autofilled_name = ""
         autofilled_phone = ""
-        
+
         if phone_lookup and phone_lookup != "N/A" and not orders_df.empty:
             match = orders_df[orders_df["phone_number"] == phone_lookup]
             if not match.empty:
                 autofilled_name = match.iloc[-1]["customer_name"]
-                st.info(f"💡 Found past Record! Match Name: {autofilled_name}")
-                
+                st.info(f"💡 Old Customer Found! Name: {autofilled_name}")
+
         if cust_name_lookup and not orders_df.empty:
             match = orders_df[orders_df["customer_name"].str.lower() == cust_name_lookup.lower()]
             if not match.empty:
                 autofilled_phone = match.iloc[-1]["phone_number"]
-                st.info(f"💡 Found past Record! Match Phone: {autofilled_phone}")
+                st.info(f"💡 Old Customer Found! Phone: {autofilled_phone}")
 
         final_name = cust_name_lookup if not autofilled_name else autofilled_name
         final_phone = phone_lookup if not autofilled_phone else autofilled_phone
-        
-        # Phone validation parameters
+
         if final_phone and final_phone != "N/A" and len(final_phone) != 10:
-            st.warning("⚠️ Warning: Phone number precise limit is exactly 10 digits!")
-            
+            st.warning("⚠️ Alert: Phone number should be exactly 10 digits!")
+
         bill_date = st.date_input("Bill Date", value=date.today())
-        platform = st.selectbox("Order Routing Channel", ["Takeaway", "Swiggy", "Zomato", "Party Order"])
-        payment_mode = st.selectbox("Payment Handling", ["Cash", "UPI", "Credit"])
-        
-        # Enforce automated rule: Aggregators act implicitly via Channel credits
+        platform = st.selectbox("Platform Routing", ["Takeaway", "Swiggy", "Zomato", "Party Order"])
+        payment_mode = st.selectbox("Payment Mode", ["Cash", "UPI", "Credit"])
+
         if platform in ["Swiggy", "Zomato"]:
             payment_mode = "Credit"
-            st.caption("ℹ️ Third-party Aggregators default cleanly to System Account Credits.")
+            st.caption("ℹ️ Swiggy/Zomato orders are handled via System Credit automatically.")
 
-    with col_dish:
-        st.subheader("2. Add Menu items into Cart")
+        st.markdown("### 2. Add Dishes")
         if not menu_df.empty:
             dish_options = menu_df["Dish Name"].tolist()
-            selected_dish = st.selectbox("Search & Pick Dish", dish_options)
+            selected_dish = st.selectbox("Search Dish Item", dish_options)
             dish_price = float(menu_df[menu_df["Dish Name"] == selected_dish].iloc[0]["Price"])
             
-            st.write(f"🏷️ Standard Unit Rate: ₹{dish_price}")
-            order_qty = st.number_input("Count Quantity Units", min_value=1, value=1, step=1)
+            st.write(f"🏷️ Price: ₹{dish_price}")
+            order_qty = st.number_input("Quantity", min_value=1, value=1, step=1)
             
-            if st.button("➕ Append to Kitchen Cart"):
-                # Handle duplicated list indexes cleanly
-                existing = [i for i, item in enumerate(st.session_state.cart) if item["dish"] == selected_dish]
+            if st.button("➕ Add to Cart"):
+                existing = [i for i, item in enumerate(st.session_state.billing_cart) if item["dish"] == selected_dish]
                 if existing:
-                    st.session_state.cart[existing[0]]["qty"] += order_qty
+                    st.session_state.billing_cart[existing[0]]["qty"] += order_qty
                 else:
-                    st.session_state.cart.append({
-                        "dish": selected_dish,
-                        "qty": order_qty,
-                        "price": dish_price
-                    })
-                st.toast(f"Added {selected_dish} successfully!")
+                    st.session_state.billing_cart.append({"dish": selected_dish, "qty": order_qty, "price": dish_price})
+                st.toast("Item added to cart!")
         else:
-            st.error("Menu Master requires entry list configurations inside database first!")
+            st.error("No dishes found in menu_master!")
 
-    st.write("---")
-    st.subheader("3. Live Invoice View & Validation")
-    
-    if st.session_state.cart:
-        invoice_data = []
-        total_amount = 0.0
-        
-        for index, item in enumerate(st.session_state.cart):
-            subtotal = item["qty"] * item["price"]
-            total_amount += subtotal
-            invoice_data.append({
-                "Serial": index + 1,
-                "Dish Name": item["dish"],
-                "Quantity Ordered": item["qty"],
-                "Rate Unit (₹)": item["price"],
-                "Subtotal (₹)": subtotal
-            })
+    with col_cart:
+        st.markdown("### 3. Invoice Cart View")
+        if st.session_state.billing_cart:
+            cart_data = []
+            total_amount = 0.0
+            for idx, item in enumerate(st.session_state.billing_cart):
+                subtotal = item["qty"] * item["price"]
+                total_amount += subtotal
+                cart_data.append({"Index": idx + 1, "Dish Name": item["dish"], "Qty": item["qty"], "Rate (₹)": item["price"], "Subtotal (₹)": subtotal})
             
-        inv_df = pd.DataFrame(invoice_data)
-        st.table(inv_df.set_index("Serial"))
-        
-        # Display dynamic row cleaning triggers
-        del_cols = st.columns(len(st.session_state.cart))
-        for idx, item in enumerate(st.session_state.cart):
-            with del_cols[idx]:
-                if st.button(f"❌ Remove Item #{idx+1}", key=f"del_{idx}"):
-                    st.session_state.cart.pop(idx)
+            st.table(pd.DataFrame(cart_data).set_index("Index"))
+            
+            # Individual Remove buttons
+            for idx, item in enumerate(st.session_state.billing_cart):
+                if st.button(f"🗑️ Remove Item #{idx+1} ({item['dish']})", key=f"del_{idx}"):
+                    st.session_state.billing_cart.pop(idx)
                     st.rerun()
-                    
-        st.markdown(f"### 💵 **Total Cumulative Order Value: ₹{total_amount}**")
-        
-        generated_bill_no = generate_bill_number()
-        st.write(f"**Assigned Reference Sequence:** {generated_bill_no}")
-        
-        if st.button("🚀 EXECUTE GENERATE CHECKOUT BILL"):
-            # Prepare descriptions summary
-            summary_list = [f"{i['dish']} (x{i['qty']})" for i in st.session_state.cart]
-            summary_str = ", ".join(summary_list)
+
+            st.markdown(f"### 💵 **Total Amount: ₹{total_amount}**")
             
-            # 1. Post to core Orders DB table
-            order_payload = {
-                "date": str(bill_date),
-                "bill_number": generated_bill_no,
-                "customer_name": final_name if final_name else "Walk-In Guest",
-                "phone_number": final_phone if final_phone else "N/A",
-                "platform": platform,
-                "payment_mode": payment_mode,
-                "amount": total_amount,
-                "items_summary": summary_str
-            }
-            supabase.table("orders").insert(order_payload).execute()
-            
-            # 2. Financial Accounts Logging Route
-            if payment_mode != "Credit":
-                acc_payload = {
+            if st.button("🚀 GENERATE BILL & CHECKOUT"):
+                items_summary = ", ".join([f"{i['dish']} (x{i['qty']})" for i in st.session_state.billing_cart])
+                
+                # Insert Order row
+                order_payload = {
                     "date": str(bill_date),
-                    "type": "Revenue",
-                    "category": "Sales",
-                    "item_name": f"Bill Receipt {generated_bill_no}",
+                    "bill_number": current_bill_id,
+                    "customer_name": final_name if final_name else "Walk-In",
+                    "phone_number": final_phone if final_phone else "N/A",
+                    "platform": platform,
+                    "payment_mode": payment_mode,
                     "amount": total_amount,
-                    "qty": 1,
-                    "unit": "nos",
-                    "notes": f"Settled seamlessly via {payment_mode}"
+                    "items_summary": items_summary
                 }
-                supabase.table("accounts").insert(acc_payload).execute()
+                supabase.table("orders").insert(order_payload).execute()
                 
-            # 3. Deduct active stocks based on underlying recipes
-            for item in st.session_state.cart:
-                deduct_stock_via_bom(item["dish"], item["qty"])
+                # Account Flow Logic
+                if payment_mode != "Credit":
+                    supabase.table("accounts").insert({
+                        "date": str(bill_date), "type": "Revenue", "category": "Sales",
+                        "item_name": f"Bill {current_bill_id}", "amount": total_amount, "qty": 1, "unit": "nos", "notes": f"Paid via {payment_mode}"
+                    }).execute()
                 
-            st.success(f"Transaction Complete! {generated_bill_no} successfully saved.")
-            
-            # Formulate text links for digital receipts distribution channels
-            whatsapp_msg = f"Vanakkam {final_name}! Your bill {generated_bill_no} from LALALA Cloud Kitchen for ₹{total_amount} is ready. Items: {summary_str}. Thanks!"
-            encoded_msg = urllib.parse.quote(whatsapp_msg)
-            wa_link = f"https://api.whatsapp.com/send?phone=91{final_phone}&text={encoded_msg}" if (final_phone and final_phone != "N/A") else "#"
-            
-            st.markdown(f"[📲 Share Bill direct to WhatsApp]({wa_link})")
-            
-            # Reset Cart state cleanly
-            st.session_state.cart = []
-    else:
-        st.info("Current operational cart registry remains empty.")
+                # Stock Deduction Route
+                for item in st.session_state.billing_cart:
+                    deduct_stock_via_bom(item["dish"], item["qty"])
+                    
+                st.success(f"Bill Generated Successfully: {current_bill_id}")
+                
+                # Reset operations
+                st.session_state.bill_number_counter += 1
+                st.session_state.billing_cart = []
+                st.rerun()
+        else:
+            st.info("Cart is empty.")
 
 # ==========================================
 # MODULE B: ADMIN CONTROL PANEL
 # ==========================================
-with tab_admin:
-    # Optional Password Verification system
-    access_allowed = True
-    if PASSWORD_PROTECTED:
-        pwd_input = st.text_input("Enter secure Management Credentials passphrase", type="password")
-        if pwd_input != ADMIN_PASSWORD:
-            access_allowed = False
-            st.warning("🔒 Enter correct administrative password to view financial tools.")
+if choice == "Admin Control Panel":
+    access_granted = True
+    if ADMIN_ENABLED:
+        passwd = st.text_input("Enter Admin Passcode", type="password")
+        if passwd != ADMIN_PASSWORD_KEY:
+            access_granted = False
+            st.warning("🔒 Restricted access area.")
             
-    if access_allowed:
-        st.header("🛠️ Production Control & Financial Dashboard")
-        
-        # Sub-panels Router
-        admin_mode = st.radio("Select Domain Desk Context", [
-            "📦 Inventory Status (Stock Tracker)",
-            "💸 Accounts Entry Panel (Kanakku Valakku)",
-            "🗑️ Wastage Entry Manager",
-            "📊 Analytical Reporting Performance Summaries"
-        ], horizontal=True)
-        
-        # Load real-time infrastructure states
+    if access_granted:
         sku_df = fetch_table("sku_master")
         bom_df = fetch_table("bom_master")
         acc_df = fetch_table("accounts")
         orders_df = fetch_table("orders")
-        
-        # ----------------------------------
-        # SUB-PANEL 1: INVENTORY TRACKER
-        # ----------------------------------
-        if admin_mode == "📦 Inventory Status (Stock Tracker)":
-            st.subheader("Live Raw Materials Master Monitor")
+
+        admin_tab = st.radio("Management Desks", [
+            "📦 Inventory Status", "💸 Accounts Entry Panel", "🗑️ Wastage Entry", "📊 Report Analytics"
+        ], horizontal=True)
+
+        # 1. STOCK TRACKER
+        if admin_tab == "📦 Inventory Status":
+            st.subheader("Live Stock Status & Worth Tracker")
             if not sku_df.empty:
-                # Dynamic warning threshold check flags
-                sku_df["Status Alert"] = sku_df.apply(
-                    lambda r: "🚨 REORDER RUNNING LOW" if float(r["current_stock"]) <= float(r["Min Stock Level"]) else "✅ Stable", axis=1
-                )
+                sku_df["Status Warning"] = sku_df.apply(lambda r: "🚨 LOW STOCK" if float(r["current_stock"]) <= float(r["Min Stock Level"]) else "✅ OK", axis=1)
                 st.dataframe(sku_df, use_container_width=True)
                 
-                # Compute total holdings capitalization
                 sku_df["Worth"] = sku_df["current_stock"].astype(float) * sku_df["Market Price"].astype(float)
-                total_worth = sku_df["Worth"].sum()
-                st.metric("📦 Total Live Holding Inventory Asset Worth", f"₹{total_worth:,.2f}")
-                
-                if st.button("Generate Pending Purchase Run Sheet"):
-                    low_stock_df = sku_df[sku_df["Status Alert"] == "🚨 REORDER RUNNING LOW"]
-                    if not low_stock_df.empty:
-                        st.subheader("📋 Procurement Recommendation Reorder Matrix")
-                        st.table(low_stock_df[["Ingerdient Name", "current_stock", "Min Stock Level", "Purchase unit"]])
-                        
-                        p_list_str = "LALALA Reorder Sheet:\n" + "\n".join([f"- {r['Ingerdient Name']}: Stock {r['current_stock']} {r['Purchase unit']} (Min: {r['Min Stock Level']})" for _, r in low_stock_df.iterrows()])
-                        wa_procure = f"https://api.whatsapp.com/send?text={urllib.parse.quote(p_list_str)}"
-                        st.markdown(f"[📲 Send Procurement Run Sheet on WhatsApp]({wa_procure})")
-                    else:
-                        st.success("All raw stock indices report healthy status margins.")
+                st.metric("Total Inventory Asset Worth", f"₹{sku_df['Worth'].sum():,.2f}")
             else:
-                st.info("No active components listed in SKU Master registry.")
-                
-        # ----------------------------------
-        # SUB-PANEL 2: ACCOUNTS PANEL
-        # ----------------------------------
-        elif admin_mode == "💸 Accounts Entry Panel (Kanakku Valakku)":
-            acc_type = st.radio("Transaction Flow Form Selection", [
-                "Raw Purchase Entry", "Fixed Expenses Registry", "Pending Credit Settlement", "Aggregator Payout Reconciliations"
-            ])
+                st.info("SKU master sheet is empty.")
+
+        # 2. ACCOUNTS ENTRY PANEL
+        elif admin_tab == "💸 Accounts Entry Panel":
+            acc_mode = st.radio("Form Mode", ["Purchase Entry", "Fixed Expenses", "Credit Dashboard", "Channel Payouts"])
             
-            if acc_type == "Raw Purchase Entry":
-                st.write("### Log Incoming Procurement Receipts")
-                p_date = st.date_input("Procurement Date", value=date.today())
-                if not sku_df.empty:
-                    p_item = st.selectbox("Select Target Raw Material SKU", sku_df["Ingerdient Name"].tolist())
-                    p_price = st.number_input("Purchase Price Unit Cost (₹)", min_value=0.0, step=1.0)
-                    p_qty = st.number_input("Inward Volume Quantity Count", min_value=0.0, step=0.1)
-                    p_unit = st.selectbox("Measurement Unit Matrix", ["gm", "ml", "nos"])
-                    
-                    if st.button("Submit Purchase Entry Records"):
-                        # Match current unit conversions dynamically to system states
-                        match_sku = sku_df[sku_df["Ingerdient Name"] == p_item].iloc[0]
-                        sys_unit = match_sku["Purchase unit"]
-                        converted_inward = convert_units(p_qty, p_unit, sys_unit)
-                        
-                        new_stock = float(match_sku["current_stock"]) + converted_inward
-                        total_cost = p_price * p_qty
-                        
-                        # Update master matrix metrics concurrently
-                        supabase.table("sku_master").update({
-                            "current_stock": new_stock,
-                            "Market Price": p_price,
-                            "price note": f"Last bought on {p_date} in {p_unit} configuration"
-                        }).eq("Ingerdient Name", p_item).execute()
-                        
-                        # Log onto Expense records matrix
-                        supabase.table("accounts").insert({
-                            "date": str(p_date),
-                            "type": "Expense",
-                            "category": "Purchase",
-                            "item_name": f"Procured: {p_item}",
-                            "amount": total_cost,
-                            "qty": p_qty,
-                            "unit": p_unit,
-                            "notes": f"Dynamic Unit Conversion multiplier scaled onto {sys_unit}"
-                        }).execute()
-                        
-                        st.success("Purchase registered successfully! Inventory metrics recalibrated.")
-                else:
-                    st.error("Setup your target Ingredient list records inside database sheets first.")
-                    
-            elif acc_type == "Fixed Expenses Registry":
-                st.write("### Log Operations Overhead Bills")
-                e_date = st.date_input("Expense Billing Window", value=date.today())
-                e_cat = st.selectbox("Category Classification", ["Rent", "EB Bill", "Salary", "Transport", "Other"])
-                e_amt = st.number_input("Outflow Cash Quantum Value (₹)", min_value=0.0, step=50.0)
-                e_notes = st.text_area("Contextual Explanatory Notes")
+            if acc_mode == "Purchase Entry" and not sku_df.empty:
+                p_date = st.date_input("Purchase Date")
+                p_item = st.selectbox("Raw SKU", sku_df["Ingerdient Name"].tolist())
+                p_price = st.number_input("Market Unit Price (₹)", min_value=0.0)
+                p_qty = st.number_input("Purchased Quantity", min_value=0.0)
+                p_unit = st.selectbox("Unit Type", ["gm", "ml", "nos"])
                 
-                if st.button("Commit Expense Row Entry"):
+                if st.button("Submit Purchase"):
+                    match = sku_df[sku_df["Ingerdient Name"] == p_item].iloc[0]
+                    sys_unit = match["Purchase unit"]
+                    converted = convert_units(p_qty, p_unit, sys_unit)
+                    new_stk = float(match["current_stock"]) + converted
+                    
+                    supabase.table("sku_master").update({"current_stock": new_stk, "Market Price": p_price}).eq("Ingerdient Name", p_item).execute()
                     supabase.table("accounts").insert({
-                        "date": str(e_date),
-                        "type": "Expense",
-                        "category": e_cat,
-                        "item_name": e_cat,
-                        "amount": e_amt,
-                        "qty": 1,
-                        "unit": "nos",
-                        "notes": e_notes
+                        "date": str(p_date), "type": "Expense", "category": "Purchase",
+                        "item_name": f"Procured: {p_item}", "amount": (p_price * p_qty), "qty": p_qty, "unit": p_unit, "notes": "Inward entry"
                     }).execute()
-                    st.success(f"Logged overhead record entry mapping out ₹{e_amt} to operational bills.")
-                    
-            elif acc_type == "Pending Credit Settlement":
-                st.write("### Customer Outstanding Recoveries Panel")
-                # Deduce structural calculations via outstanding pipelines
-                credit_bills = orders_df[orders_df["payment_mode"] == "Credit"] if not orders_df.empty else pd.DataFrame()
-                
-                if not credit_bills.empty:
-                    # Gather recovery balances aggregated historically
-                    recovery_df = acc_df[(acc_df["type"] == "Revenue") & (acc_df["category"] == "Settlement")] if not acc_df.empty else pd.DataFrame()
-                    
-                    clients = credit_bills["customer_name"].unique().tolist()
-                    selected_client = st.selectbox("Select Target Client Account", clients)
-                    
-                    client_total_due = credit_bills[credit_bills["customer_name"] == selected_client]["amount"].sum()
-                    client_recovered = recovery_df[recovery_df["item_name"] == f"Recovery: {selected_client}"]["amount"].sum() if not recovery_df.empty else 0.0
-                    
-                    net_outstanding = client_total_due - client_recovered
-                    st.metric(f"Current Outstanding Liability Balance Due for [{selected_client}]", f"₹{net_outstanding:,.2f}")
-                    
-                    c_date = st.date_input("Settlement Event Date", value=date.today())
-                    recv_amt = st.number_input("Inward Liquidation Quantum (₹)", min_value=0.0, max_value=float(net_outstanding) if net_outstanding > 0 else 1000000.0, step=10.0)
-                    
-                    if st.button("Submit Inward Ledger Balance Recovery"):
-                        if recv_amt > 0:
-                            supabase.table("accounts").insert({
-                                "date": str(c_date),
-                                "type": "Revenue",
-                                "category": "Settlement",
-                                "item_name": f"Recovery: {selected_client}",
-                                "amount": recv_amt,
-                                "qty": 1,
-                                "unit": "nos",
-                                "notes": "Credit recovery ledger settlement processing"
-                            }).execute()
-                            st.success(f"Account credit recovery logged for ₹{recv_amt}.")
-                            st.rerun()
-                else:
-                    st.info("No recorded pending system credit transactions exist on active lines.")
-                    
-            elif acc_type == "Aggregator Payout Reconciliations":
-                st.write("### Channel Commission Settlement Pipeline")
-                st.write("#### Live Pending Channel Balances Tracking Dashboard")
-                
-                # Fetch data structures safely
-                orders_data = fetch_table("orders")
-                accounts_data = fetch_table("accounts")
-                
-                # Swiggy/Zomato Total Sales Calculations
-                agg_sales_swiggy = orders_data[(orders_data["platform"] == "Swiggy")]["amount"].sum() if not orders_data.empty else 0
-                agg_sales_zomato = orders_data[(orders_data["platform"] == "Zomato")]["amount"].sum() if not orders_data.empty else 0
-                
-                # Calculated Received Channel Payouts Metrics
-                if not accounts_data.empty:
-                    settled_swiggy = accounts_data[(accounts_data["category"] == "Settlement") & (accounts_data["item_name"] == "Swiggy Settlement Bank Inward")]["amount"].sum()
-                    settled_zomato = accounts_data[(accounts_data["category"] == "Settlement") & (accounts_data["item_name"] == "Zomato Settlement Bank Inward")]["amount"].sum()
-                    comm_swiggy = accounts_data[(accounts_data["category"] == "Platform Charge") & (accounts_data["item_name"] == "Swiggy Commission Writeoff")]["amount"].sum()
-                    comm_zomato = accounts_data[(accounts_data["category"] == "Platform Charge") & (accounts_data["item_name"] == "Zomato Commission Writeoff")]["amount"].sum()
-                else:
-                    settled_swiggy = settled_zomato = comm_swiggy = comm_zomato = 0
-                
-                live_swiggy_outstanding = agg_sales_swiggy - (settled_swiggy + comm_swiggy)
-                live_zomato_outstanding = agg_sales_zomato - (settled_zomato + comm_zomato)
-                
-                c1, c2 = st.columns(2)
-                c1.metric("🏍️ Swiggy Live Outstanding Balance", f"₹{live_swiggy_outstanding:,.2f}")
-                c2.metric("🛵 Zomato Live Outstanding Balance", f"₹{live_zomato_outstanding:,.2f}")
-                
-                st.write("---")
-                st.write("#### Reconcile New Payout Batch File")
-                
-                f_date = st.date_input("Settlement Range Horizon From", value=date.today() - timedelta(days=7))
-                t_date = st.date_input("Settlement Range Horizon To", value=date.today())
-                
-                target_platform = st.selectbox("Target Aggregator Stream Channel", ["Swiggy", "Zomato"])
-                inward_bank_cash = st.number_input("Net Bank Deposited Amount received (₹)", min_value=0.0)
-                total_gross_dispatched = st.number_input("Gross Platform Order Valuation dispatched (₹)", min_value=0.0)
-                
-                implied_commission_losses = total_gross_dispatched - inward_bank_cash
-                st.caption(f"Calculated Marketplace Commission Burn Write-off Margin: ₹{implied_commission_losses}")
-                
-                if st.button("Execute Double-Entry Reconciliation Ledger"):
-                    if inward_bank_cash > 0 and total_gross_dispatched >= inward_bank_cash:
-                        # 1. Book clean liquid financial ledger inputs mapping revenue
-                        supabase.table("accounts").insert({
-                            "date": str(t_date),
-                            "type": "Revenue",
-                            "category": "Settlement",
-                            "item_name": f"{target_platform} Settlement Bank Inward",
-                            "amount": inward_bank_cash,
-                            "qty": 1,
-                            "unit": "nos",
-                            "notes": f"Bank Settlement Range: {f_date} to {t_date}"
-                        }).execute()
-                        
-                        # 2. Book Platform Commission burns into Expense ledgers concurrently
-                        if implied_commission_losses > 0:
-                            supabase.table("accounts").insert({
-                                "date": str(t_date),
-                                "type": "Expense",
-                                "category": "Platform Charge",
-                                "item_name": f"{target_platform} Commission Writeoff",
-                                "amount": implied_commission_losses,
-                                "qty": 1,
-                                "unit": "nos",
-                                "notes": f"Aggregator operational cuts for {target_platform}"
-                            }).execute()
-                            
-                        st.success("Reconciliation records adjusted successfully.")
-                        st.rerun()
-                    else:
-                        st.error("Invalid entry: Gross sales value must exceed net bank cash inputs.")
+                    st.success("Purchase added & stock incremented!")
+                    st.rerun()
 
-        # ----------------------------------
-        # SUB-PANEL 3: WASTAGE ENTRY MANAGER
-        # ----------------------------------
-        elif admin_mode == "🗑️ Wastage Entry Manager":
-            st.subheader("Inventory Stock Audits & Wastage Correction Desk")
-            w_mode = st.radio("Select Leakage Target Type Context", ["Raw Material Loss", "Cooked Item Waste", "Complimentary / Promo"])
-            
-            w_date = st.date_input("Audit Ledger Date", value=date.today())
-            
-            if w_mode == "Raw Material Loss":
-                if not sku_df.empty:
-                    w_sku = st.selectbox("Select Damaged Ingredient SKU", sku_df["Ingerdient Name"].tolist())
-                    w_qty = st.number_input("Wastage Quantity Volume Count", min_value=0.0, step=0.1)
+            elif acc_mode == "Fixed Expenses":
+                e_date = st.date_input("Overhead Date")
+                e_cat = st.selectbox("Category", ["Rent", "EB Bill", "Salary", "Transport", "Other"])
+                e_amt = st.number_input("Amount (₹)", min_value=0.0)
+                if st.button("Save Expense"):
+                    supabase.table("accounts").insert({
+                        "date": str(e_date), "type": "Expense", "category": e_cat, "item_name": e_cat, "amount": e_amt, "qty": 1, "unit": "nos", "notes": ""
+                    }).execute()
+                    st.success("Expense logged to Accounts sheet.")
+
+            elif acc_mode == "Credit Dashboard" and not orders_df.empty:
+                st.write("#### Pending Outstanding Recoveries")
+                credits = orders_df[orders_df["payment_mode"] == "Credit"]
+                if not credits.empty:
+                    clients = credits["customer_name"].unique().tolist()
+                    sel_client = st.selectbox("Select Client", clients)
+                    total_due = credits[credits["customer_name"] == sel_client]["amount"].sum()
                     
-                    sku_row = sku_df[sku_df["Ingerdient Name"] == w_sku].iloc[0]
-                    s_unit = sku_row["Purchase unit"]
-                    st.write(f"Standard operational tracking packaging layout: **{s_unit}**")
+                    recovered = acc_df[(acc_df["category"] == "Settlement") & (acc_df["item_name"] == f"Recovery: {sel_client}")]["amount"].sum() if not acc_df.empty else 0.0
+                    net_due = total_due - recovered
+                    st.metric(f"Net Balance Due for {sel_client}", f"₹{net_due:,.2f}")
                     
-                    if st.button("Log Material Loss & Deduct Stock"):
-                        cur_stock = float(sku_row["current_stock"])
-                        mkt_prc = float(sku_row["Market Price"])
-                        calculated_loss_value = w_qty * mkt_prc
-                        
-                        # Deduct from SKU database table
-                        supabase.table("sku_master").update({"current_stock": cur_stock - w_qty}).eq("Ingerdient Name", w_sku).execute()
-                        
-                        # Post to Accounts as explicit operational loss expense row
+                    rec_amt = st.number_input("Recovered Amount (₹)", min_value=0.0)
+                    if st.button("Submit Inward Settlement"):
                         supabase.table("accounts").insert({
-                            "date": str(w_date),
-                            "type": "Expense",
-                            "category": "Wastage",
-                            "item_name": f"Raw Loss: {w_sku}",
-                            "amount": calculated_loss_value,
-                            "qty": w_qty,
-                            "unit": s_unit,
-                            "notes": f"Wastage recorded via Raw Material Loss workflow"
+                            "date": str(date.today()), "type": "Revenue", "category": "Settlement", "item_name": f"Recovery: {sel_client}", "amount": rec_amt, "qty": 1, "unit": "nos", "notes": ""
                         }).execute()
-                        st.success(f"Stock adjusted! Registered ₹{calculated_loss_value} operational deficit loss.")
-                else:
-                    st.info("Initialize raw elements configuration states first.")
+                        st.success("Credit status updated!"); st.rerun()
+
+            elif acc_mode == "Channel Payouts":
+                st.write("#### Aggregator Financial Settlements")
+                s_sales = orders_df[orders_df["platform"] == "Swiggy"]["amount"].sum() if not orders_df.empty else 0
+                z_sales = orders_df[orders_df["platform"] == "Zomato"]["amount"].sum() if not orders_df.empty else 0
+                
+                st.write(f"**Gross Swiggy Booked Revenue Tracker:** ₹{s_sales}")
+                st.write(f"**Gross Zomato Booked Revenue Tracker:** ₹{z_sales}")
+                
+                target_p = st.selectbox("Channel", ["Swiggy", "Zomato"])
+                inward_cash = st.number_input("Net Bank Deposited Amount (₹)", min_value=0.0)
+                gross_disp = st.number_input("Gross Platform Order Value Dispatched (₹)", min_value=0.0)
+                
+                if st.button("Execute Settlement Entry"):
+                    comm_loss = gross_disp - inward_cash
+                    supabase.table("accounts").insert({"date": str(date.today()), "type": "Revenue", "category": "Settlement", "item_name": f"{target_p} Settlement Bank Inward", "amount": inward_cash, "qty": 1, "unit": "nos", "notes": ""}).execute()
+                    if comm_loss > 0:
+                        supabase.table("accounts").insert({"date": str(date.today()), "type": "Expense", "category": "Platform Charge", "item_name": f"{target_p} Commission Writeoff", "amount": comm_loss, "qty": 1, "unit": "nos", "notes": ""}).execute()
+                    st.success("Payout reconciliation entries recorded successfully.")
+
+        # 3. WASTAGE ENTRY
+        elif admin_tab == "🗑️ Wastage Entry":
+            w_type = st.radio("Leakage Category", ["Raw Material Loss", "Cooked Item Waste", "Complimentary / Promo"])
+            w_date = st.date_input("Audit Event Date")
+            
+            if w_type == "Raw Material Loss" and not sku_df.empty:
+                w_sku = st.selectbox("Select Ingredient", sku_df["Ingerdient Name"].tolist())
+                w_qty = st.number_input("Loss Volume", min_value=0.0)
+                if st.button("Log Raw Loss"):
+                    row = sku_df[sku_df["Ingerdient Name"] == w_sku].iloc[0]
+                    supabase.table("sku_master").update({"current_stock": float(row["current_stock"]) - w_qty}).eq("Ingerdient Name", w_sku).execute()
+                    supabase.table("accounts").insert({"date": str(w_date), "type": "Expense", "category": "Wastage", "item_name": f"Raw Loss: {w_sku}", "amount": (w_qty * float(row["Market Price"])), "qty": w_qty, "unit": row["Purchase unit"], "notes": ""}).execute()
+                    st.success("Wastage updated on SKU table.")
                     
-            elif w_mode in ["Cooked Item Waste", "Complimentary / Promo"]:
+            elif w_type in ["Cooked Item Waste", "Complimentary / Promo"] and not bom_df.empty:
                 menu_master_df = fetch_table("menu_master")
-                if not menu_master_df.empty and not bom_df.empty:
-                    w_dish = st.selectbox("Select Target Menu Dish Item", menu_master_df["Dish Name"].tolist())
-                    w_qty = st.number_input("Dispatched Item Units Count Volume", min_value=1, step=1)
-                    
-                    if st.button("Log Operational Recipe Leakage Adjustments"):
-                        # Calculate dynamic standard loss value maps via raw recipes
-                        bom_making_cost = get_bom_cost(w_dish, bom_df, sku_df)
-                        total_loss_footprint = bom_making_cost * w_qty
-                        
-                        # 1. Deduct component stocks sequentially using BOM recipe
-                        deduct_stock_via_bom(w_dish, w_qty)
-                        
-                        # 2. Log expenses into Accounts registry ledger matrix sheets
-                        supabase.table("accounts").insert({
-                            "date": str(w_date),
-                            "type": "Expense",
-                            "category": "Wastage",
-                            "item_name": f"{w_mode}: {w_dish}",
-                            "amount": total_loss_footprint,
-                            "qty": w_qty,
-                            "unit": "nos",
-                            "notes": f"BOM Calculated recipe write-off for {w_dish}"
-                        }).execute()
-                        
-                        st.success(f"Recipe leakage logged. Traced and deducted raw assets worth ₹{total_loss_footprint:,.2f}.")
-                else:
-                    st.error("BOM Structure map metrics configurations missing from system layers.")
+                w_dish = st.selectbox("Select Menu Dish", menu_master_df["Dish Name"].tolist() if not menu_master_df.empty else [])
+                w_qty = st.number_input("Units Count Volume", min_value=1, step=1)
+                if st.button("Log Cooked Waste Adjustments"):
+                    cost_per_dish = get_bom_cost(w_dish, bom_df.to_dict('records'), sku_df)
+                    deduct_stock_via_bom(w_dish, w_qty)
+                    supabase.table("accounts").insert({"date": str(w_date), "type": "Expense", "category": "Wastage", "item_name": f"{w_type}: {w_dish}", "amount": (cost_per_dish * w_qty), "qty": w_qty, "unit": "nos", "notes": ""}).execute()
+                    st.success("BOM materials adjusted safely.")
 
-        # ----------------------------------
-        # SUB-PANEL 4: ANALYTICAL REPORTING
-        # ----------------------------------
-        elif admin_mode == "📊 Analytical Reporting Performance Summaries":
-            st.subheader("Data Intelligence & Strategic Operations Analytics Matrix")
+        # 4. REPORTS
+        elif admin_tab == "📊 Report Analytics":
+            f_d = st.date_input("From Horizon Date", value=date.today()-timedelta(days=30))
+            t_d = st.date_input("To Horizon Date", value=date.today())
             
-            f_date = st.date_input("Report Window Horizon From", value=date.today() - timedelta(days=30))
-            t_date = st.date_input("Report Window Horizon To", value=date.today())
-            
-            # Global historical dataframe filtering workflows
             if not acc_df.empty:
                 acc_df["date"] = pd.to_datetime(acc_df["date"]).dt.date
-                f_acc = acc_df[(acc_df["date"] >= f_date) & (acc_df["date"] <= t_date)]
-            else: f_acc = pd.DataFrame()
+                f_acc = acc_df[(acc_df["date"] >= f_d) & (acc_df["date"] <= t_d)]
                 
-            if not orders_df.empty:
-                orders_df["date"] = pd.to_datetime(orders_df["date"]).dt.date
-                f_orders = orders_df[(orders_df["date"] >= f_date) & (orders_df["date"] <= t_date)]
-            else: f_orders = pd.DataFrame()
-
-            # --- SUB REPORT A: P&L ---
-            st.markdown("### 📊 Consolidated Profit & Loss Summary")
-            rev_sum = f_acc[f_acc["type"] == "Revenue"]["amount"].sum() if not f_acc.empty else 0.0
-            exp_sum = f_acc[f_acc["type"] == "Expense"]["amount"].sum() if not f_acc.empty else 0.0
-            net_margin = rev_sum - exp_sum
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Gross Attributed Revenue Receipts", f"₹{rev_sum:,.2f}")
-            c2.metric("Total Consolidated Cost Overhead Outflows", f"₹{exp_sum:,.2f}")
-            c3.metric("Net Dispatched Profit Extraction Margin", f"₹{net_margin:,.2f}", delta=float(net_margin))
-            
-            # --- SUB REPORT B: WORKING DAYS ---
-            st.markdown("### 📅 Operational Dispatch Working Days Analysis")
-            if not f_orders.empty:
-                unique_days = f_orders["date"].nunique()
-                avg_sales_day = f_orders["amount"].sum() / unique_days if unique_days > 0 else 0
-                st.write(f"Active Service Delivery Days logged inside the given scope window: **{unique_days} Days**")
-                st.write(f"Calculated Mean Sales Density Run-Rate per Active Day: **₹{avg_sales_day:,.2f} / Day**")
-            else: st.info("No sales records logged in the specified date range.")
-
-            # --- SUB REPORT C: DISH PERFORMANCE ---
-            st.markdown("### 🍲 Menu Performance Volume Density Metrics")
-            if not f_orders.empty:
-                dish_counts = {}
-                for _, row in f_orders.iterrows():
-                    # Parse item summary texts
-                    summary = str(row["items_summary"])
-                    parts = summary.split(", ")
-                    for p in parts:
-                        if "(" in p:
-                            try:
-                                d_name = p.split(" (")[0]
-                                d_qty = int(p.split("(x")[1].replace(")", ""))
-                                dish_counts[d_name] = dish_counts.get(d_name, 0) + d_qty
-                            except: pass
-                if dish_counts:
-                    perf_df = pd.DataFrame(list(dish_counts.items()), columns=["Dish Item Formulation Name", "Volume Units Sold Ordered"]).sort_values(by="Volume Units Sold Ordered", ascending=False)
-                    st.bar_chart(perf_df.set_index("Dish Item Formulation Name"))
-                    st.table(perf_df)
-                else: st.caption("Inconclusive transaction metrics structure data signatures.")
-            
-            # --- SUB REPORT D: CRM CUSTOMER RETENTION ---
-            st.markdown("### 👥 CRM Retention Loyalty Vectors")
-            if not f_orders.empty:
-                cust_freq = f_orders["customer_name"].value_value_counts() if "customer_name" in f_orders.columns else pd.DataFrame()
-                if not cust_freq.empty:
-                    st.write("#### Top Loyal Ordering Customer Personas Accounts Profile List")
-                    st.dataframe(cust_freq.head(10))
-                    
-            # --- SUB REPORT E: PLATFORMS SALES ---
-            st.markdown("### 📱 Platform Channels Valuation Market Splits")
-            if not f_orders.empty:
-                p_splits = f_orders.groupby("platform")["amount"].sum().reset_index()
-                st.dataframe(p_splits)
+                rev_sum = f_acc[f_acc["type"] == "Revenue"]["amount"].sum()
+                exp_sum = f_acc[f_acc["type"] == "Expense"]["amount"].sum()
                 
-            # --- SUB REPORT F: WASTAGE ANALYSIS ---
-            st.markdown("### 🗑️ Operational Wastage Footprint Tracking Deficit")
-            if not f_acc.empty:
-                waste_rows = f_acc[f_acc["category"] == "Wastage"]
-                if not waste_rows.empty:
-                    st.table(waste_rows[["date", "item_name", "amount", "notes"]])
-                    st.metric("Total Asset Value Dissipated via Leakage Waste", f"₹{waste_rows['amount'].sum():,.2f}")
-                else: st.info("No recorded product leakage adjustments verified within this range window.")
-
-            # --- SUB REPORT G: EXPENSES BREAKDOWN ---
-            st.markdown("### 💸 Fixed Capital Expenditure Overheads Breakdown")
-            if not f_acc.empty:
-                exp_rows = f_acc[f_acc["type"] == "Expense"]
-                if not exp_rows.empty:
-                    exp_breakdown = exp_rows.groupby("category")["amount"].sum().reset_index()
-                    st.dataframe(exp_breakdown)
-
-            # --- SUB REPORT H: DEAD STOCK AUDIT ---
-            st.markdown("### 🛑 Dead Stock Audit Monitoring Panel (60-Day Inactivity Matrix)")
-            if not sku_df.empty:
-                sixty_days_ago = date.today() - timedelta(days=60)
-                # Filter out raw products showing zero purchase velocity spikes
-                st.caption("Cross-verifying materials lacking incoming procurement activity indexes for more than 60 days.")
-                if not f_acc.empty:
-                    recent_purchases = f_acc[(f_acc["category"] == "Purchase") & (f_acc["date"] >= sixty_days_ago)]["item_name"].tolist()
-                    dead_materials = []
-                    for _, r in sku_df.iterrows():
-                        p_string = f"Procured: {r['Ingerdient Name']}"
-                        if p_string not in recent_purchases:
-                            dead_materials.append(r["Ingerdient Name"])
-                    if dead_materials:
-                        st.warning(f"⚠️ Traced {len(dead_materials)} slow-moving ingredient profiles showing low activity velocity:")
-                        st.write(dead_materials)
-                    else: st.success("All listed ingredients have shown fresh inbound procurement movement recently.")
-                else: st.info("Data logging tracks are currently insufficient to map inventory velocity metrics safely.")
+                st.markdown("### 📊 Profit & Loss Metric Frame")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Gross Revenue Receipts", f"₹{rev_sum:,.2f}")
+                c2.metric("Total Expenses Cost Outflows", f"₹{exp_sum:,.2f}")
+                c3.metric("Net Operational Margin Profit", f"₹{(rev_sum - exp_sum):,.2f}")
                 
-            # --- HISTORICAL SEARCH ARCHIVE ENGINE ---
+                st.markdown("### 💸 Fixed Expenditure Overheads Splits")
+                st.dataframe(f_acc[f_acc["type"] == "Expense"].groupby("category")["amount"].sum().reset_index())
+            else:
+                st.info("Accounts pipeline reports empty.")
+                
             st.write("---")
-            st.markdown("### 🔍 Historical Archive Deep-Search Core Engine")
-            search_query = st.text_input("Deep-Query Lookup Match (Provide Target Reference Bill Sequence / Contact Phone Number)")
-            if search_query and not orders_df.empty:
-                archive_match = orders_df[(orders_df["bill_number"].str.contains(search_query, case=False, na=False)) | 
-                                          (orders_df["phone_number"].str.contains(search_query, na=False))]
-                if not archive_match.empty:
-                    st.subheader("🎯 Verified Document Match Found")
-                    st.dataframe(archive_match)
-                else:
-                    st.error("No historical receipts trace returned matches against provided credentials parameters.")
+            st.markdown("### 🔍 Historical Bill Deep Search Archive")
+            query = st.text_input("Look up Reference (Bill No / Phone)")
+            if query and not orders_df.empty:
+                res = orders_df[(orders_df["bill_number"].str.contains(query, case=False, na=False)) | (orders_df["phone_number"].str.contains(query, na=False))]
+                st.dataframe(res)
