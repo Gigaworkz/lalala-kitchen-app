@@ -363,11 +363,17 @@ elif choice == "Admin Login":
                 st.markdown("### 🛒 Raw Material Purchase")
                 try:
                     p_item_res = supabase.table("sku_master").select("*").execute()
+                    def safe_float(val):
+                        try:
+                            return float(val)
+                        except:
+                            return 0.0
+
                     item_data  = {
                         i["Ingerdient Name"]: {
                             "unit"      : i.get("Purchase unit", ""),
-                            "mkt_price" : float(i.get("Market Price") or 0),
-                            "base_price": float(i.get("price note")  or 0)
+                            "mkt_price" : safe_float(i.get("Market Price")),
+                            "base_price": i.get("price note", "—")  # Text-ஆ store, float வேண்டாம்
                         }
                         for i in p_item_res.data if i.get("Ingerdient Name")
                     } if p_item_res.data else {}
@@ -382,7 +388,7 @@ elif choice == "Admin Login":
                         st.info(f"Unit: **{s_unit}**")
                         # FIX 2: Show both prices clearly
                         pc1, pc2 = st.columns(2)
-                        pc1.metric("Base Price (Reference)", f"₹{base_price}", help="price note — never changes")
+                        pc1.metric("Base Price (Reference)", f"{base_price}", help="price note — never changes")
                         pc2.metric("Current Market Price", f"₹{old_mkt}", help="Updated on each purchase")
                     with col2:
                         p_qty = st.number_input(f"Qty ({s_unit})", min_value=0.1, key="p_qty")
